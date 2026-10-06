@@ -125,8 +125,14 @@ window.CONFIG = {
   repo:   "XRYUBHO",
   branch: "main",
 
-  // התיקייה בתוך הרפו שבה הסרטונים (אם תשים אותם בשורש, תשאיר "")
+  // התיקייה בתוך הרפו שבה הסרטונים המאושרים (אם תשים אותם בשורש, תשאיר "")
   videosDir: "videos",
+
+  // סרטונים שהועלו מהאתר ממתינים כאן עד שהמנהל מאשר. לא מופיעים בפיד.
+  pendingDir: "pending",
+
+  // מי רואה את תור האישורים ויכול לאשר או לדחות
+  adminEmail: "0772292196ai@gmail.com",
 
   // שם המשתמש שיוצג מתחת לסרטון כברירת מחדל
   defaultAuthor: "@user",
@@ -478,7 +484,22 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
   }
   .me-row .nm{font-weight:800;font-size:15.5px}
   .me-row .sub{font-size:12.5px;color:var(--dimmer);margin-top:2px}
-  .upinfo{font-size:13px;color:var(--dim);text-align:center;margin:8px 0 2px;min-height:18px}
+  .upinfo{font-size:13px;color:var(--dim);text-align:center;margin:8px 0 2px;min-height:18px;line-height:1.5}
+  .upinfo.bad{color:#ff6b6b;font-weight:600}
+  .pend{
+    border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:12px;
+    background:rgba(255,255,255,.04);
+  }
+  .pvid{width:100%;max-height:230px;border-radius:9px;background:#000;display:block}
+  .pname{font-size:13px;color:var(--dim);margin:8px 2px 10px;word-break:break-word}
+  .pacts{display:flex;gap:8px}
+  .pacts button{
+    flex:1;padding:10px;border-radius:9px;font-weight:800;font-size:14px;
+  }
+  .pacts .ok{background:#1db954;color:#fff}
+  .pacts .no{background:rgba(255,255,255,.12);color:#ff8585}
+  .pacts button:disabled{opacity:.45}
+  .pstat{font-size:12.5px;color:var(--accent-2);text-align:center;margin-top:7px;min-height:16px}
   .upcap{
     width:100%;background:rgba(255,255,255,.1);border:0;border-radius:10px;
     padding:12px 14px;color:#fff;font-size:14.5px;outline:none;margin:8px 0 10px;
@@ -642,6 +663,7 @@ const done = window.__cloudDone;
         api.user = u ? {
           uid:   u.uid,
           name:  u.displayName || (u.email || "").split("@")[0] || "משתמש",
+          email: u.email || "",
           photo: u.photoURL || ""
         } : null;
         api.uid = u ? u.uid : null;
@@ -895,7 +917,10 @@ async function fromRepoTree() {
     if (IMAGE_EXT.test(f.path)) posters.set(f.path.replace(IMAGE_EXT, "").toLowerCase(), f.path);
   }
   const dir = (C.videosDir || "").replace(/^\/+|\/+$/g, "");
+  const pend = (C.pendingDir || "").replace(/^\/+|\/+$/g, "").toLowerCase();
   let vids = files.filter(f => VIDEO_EXT.test(f.path));
+  // סרטונים שממתינים לאישור המנהל לא נכנסים לפיד
+  if (pend) vids = vids.filter(f => !f.path.toLowerCase().startsWith(pend + "/"));
   if (dir) {
     const inDir = vids.filter(f => f.path.toLowerCase().startsWith(dir.toLowerCase() + "/"));
     if (inDir.length) vids = inDir;                   // יש תיקיית videos — משתמשים רק בה
@@ -1431,6 +1456,47 @@ function toBase64(file) {
   });
 }
 
+/* ---- בדיקת קובץ לפני העלאה ----
+   סיומת + סוג MIME + חתימת הבייטים בפועל. השלישית היא החשובה:
+   בלעדיה אפשר לשנות שם של כל קובץ ל-.mp4 ולדחוף אותו לרפו. */
+const ALLOWED_EXT  = /\.(mp4|m4v|mov|webm|ogv)$/i;
+const MAX_BYTES    = 100 * 1024 * 1024;
+const MP4_BOXES    = ["ftyp", "moov", "mdat", "free", "wide", "skip", "pnot"];
+
+function readHead(file, n) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onerror = () => rej(new Error("לא הצלחתי לקרוא את הקובץ"));
+    fr.onload  = () => res(new Uint8Array(fr.result));
+    fr.readAsArrayBuffer(file.slice(0, n));
+  });
+}
+
+/** מחזיר null אם הקובץ תקין, אחרת מחרוזת הסבר למה הוא נדחה */
+async function rejectReason(file) {
+  if (!file || !file.size) return "הקובץ ריק.";
+  if (file.size > MAX_BYTES) return "הקובץ " + (file.size / 1048576).toFixed(1) + "MB — המקסימום בגיטהאב הוא 100MB.";
+  if (!ALLOWED_EXT.test(file.name)) return "מותר רק MP4, MOV, WEBM או OGV. זה " + (file.name.split(".").pop() || "ללא סיומת") + ".";
+  if (file.type && !/^video\//i.test(file.type)) return "הדפדפן מזהה את הקובץ כ-" + file.type + ", לא כווידאו.";
+
+  let head;
+  try { head = await readHead(file, 16); }
+  catch { return "לא הצלחתי לקרוא את תחילת הקובץ."; }
+  if (head.length < 12) return "הקובץ קצר מדי מכדי להיות וידאו.";
+
+  const ascii = (from, len) => String.fromCharCode.apply(null, head.subarray(from, from + len));
+
+  const isMp4  = MP4_BOXES.indexOf(ascii(4, 4)) > -1;                 // MP4 / MOV
+  const isWebm = head[0] === 0x1A && head[1] === 0x45 &&
+                 head[2] === 0xDF && head[3] === 0xA3;                // WebM / MKV
+  const isOgg  = ascii(0, 4) === "OggS";                              // Ogg
+
+  if (!isMp4 && !isWebm && !isOgg) {
+    return "זה לא קובץ וידאו. שינוי הסיומת ל-mp4 לא הופך קובץ לסרטון.";
+  }
+  return null;
+}
+
 function slugify(s) {
   return (s || "").trim().toLowerCase()
     .replace(/['"]/g, "")
@@ -1439,10 +1505,10 @@ function slugify(s) {
     .slice(0, 60);
 }
 
-/** מעלה קובץ אחד כקומיט. onStep מדווח התקדמות. */
+/** מעלה קובץ אחד כקומיט לתיקיית ההמתנה. onStep מדווח התקדמות. */
 async function ghCommitFile(file, caption, onStep) {
   const o = CONFIG.owner, r = CONFIG.repo, br = CONFIG.branch;
-  const dir = (CONFIG.videosDir || "").replace(/^\/+|\/+$/g, "");
+  const dir = (CONFIG.pendingDir || CONFIG.videosDir || "").replace(/^\/+|\/+$/g, "");
   const ext = (file.name.match(/\.[a-z0-9]+$/i) || [".mp4"])[0].toLowerCase();
   const base = slugify(caption) || slugify(file.name.replace(/\.[^.]+$/, "")) || "clip";
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -1488,6 +1554,57 @@ async function ghCommitFile(file, caption, onStep) {
   return path;
 }
 
+/* ---- תור האישורים של המנהל ---- */
+function isAdmin() {
+  return !!(CL.user && C.adminEmail &&
+            CL.user.email.toLowerCase() === C.adminEmail.toLowerCase());
+}
+
+/** כל הסרטונים שממתינים לאישור, מהרפו הציבורי (בלי צורך בטוקן) */
+async function listPending() {
+  const pend = (C.pendingDir || "").replace(/^\/+|\/+$/g, "").toLowerCase();
+  if (!pend) return [];
+  const api = `https://api.github.com/repos/${C.owner}/${C.repo}/git/trees/${C.branch}?recursive=1&t=${Date.now()}`;
+  const r = await fetch(api, { headers: { Accept: "application/vnd.github+json" }, cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const data = await r.json();
+  return (data.tree || [])
+    .filter(n => n.type === "blob" && VIDEO_EXT.test(n.path) &&
+                 n.path.toLowerCase().startsWith(pend + "/"))
+    .map(n => ({ path: n.path, sha: n.sha, size: n.size || 0 }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** מעביר קובץ מההמתנה לפיד, או מוחק אותו — הכל בקומיט אחד */
+async function ghMoveOrDelete(fromPath, toPath, blobSha, message) {
+  const o = C.owner, r = C.repo, br = C.branch;
+  const ref = await ghFetch(`/repos/${o}/${r}/git/ref/heads/${br}`);
+  const headSha = ref.object.sha;
+  const headCommit = await ghFetch(`/repos/${o}/${r}/git/commits/${headSha}`);
+
+  const entries = [{ path: fromPath, mode: "100644", type: "blob", sha: null }]; // null = מחיקה
+  if (toPath) entries.push({ path: toPath, mode: "100644", type: "blob", sha: blobSha });
+
+  const tree = await ghFetch(`/repos/${o}/${r}/git/trees`, {
+    method: "POST",
+    body: JSON.stringify({ base_tree: headCommit.tree.sha, tree: entries })
+  });
+  const commit = await ghFetch(`/repos/${o}/${r}/git/commits`, {
+    method: "POST",
+    body: JSON.stringify({ message, tree: tree.sha, parents: [headSha] })
+  });
+  await ghFetch(`/repos/${o}/${r}/git/refs/heads/${br}`, {
+    method: "PATCH",
+    body: JSON.stringify({ sha: commit.sha })
+  });
+}
+
+function approvedPathFor(pendingPath) {
+  const dir = (C.videosDir || "").replace(/^\/+|\/+$/g, "");
+  const name = pendingPath.split("/").pop();
+  return (dir ? dir + "/" : "") + name;
+}
+
 function uploadError(e) {
   const m = (e && e.message) || "";
   if (e && e.status === 404) return "אין לך הרשאת כתיבה לרפו הזה.";
@@ -1498,6 +1615,87 @@ function uploadError(e) {
 }
 
 const GH_SVG = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
+
+/* ============================================================
+   מסך המנהל — אישור או דחייה של סרטונים שהועלו
+   ============================================================ */
+async function openReview() {
+  const s = sheet("ממתינים לאישור", '<div class="empty-note">טוען…</div>', "");
+  const body = () => $(".body", s);
+
+  const render = async () => {
+    let list;
+    try { list = await listPending(); }
+    catch (e) { body().innerHTML = '<div class="empty-note">לא הצלחתי לקרוא את התור — ' + esc(e.message) + "</div>"; return; }
+
+    if (!list.length) {
+      body().innerHTML = '<div class="empty-note">אין סרטונים שממתינים.<br>כל מה שהועלה כבר טופל.</div>';
+      return;
+    }
+
+    if (!CL.ghToken) {
+      body().innerHTML =
+        "<p><b>" + list.length + "</b> סרטונים ממתינים. כדי לאשר או לדחות צריך להתחבר ל-GitHub.</p>" +
+        '<button class="btn" id="ghrev">' + GH_SVG + "להתחבר עם GitHub</button>" +
+        list.map(p => '<div class="pend"><div class="pname">' + esc(prettify(p.path)) +
+          " · " + (p.size / 1048576).toFixed(1) + "MB</div></div>").join("");
+      $("#ghrev", s).addEventListener("click", async e => {
+        const b = e.currentTarget; b.disabled = true; b.style.opacity = ".6";
+        try { await CL.ghSignIn(); await render(); }
+        catch (err) {
+          const c = (err && err.code) || "";
+          if (/popup-blocked/.test(c)) toast("הדפדפן חסם את חלון ההתחברות — אשר חלונות קופצים");
+          else if (!/popup-closed-by-user|cancelled-popup-request/.test(c)) toast("ההתחברות נכשלה");
+          b.disabled = false; b.style.opacity = "";
+        }
+      });
+      return;
+    }
+
+    body().innerHTML = list.map((p, i) =>
+      '<div class="pend" data-i="' + i + '">' +
+        '<video class="pvid" src="' + esc(srcsFor(p.path)[0]) + '" controls playsinline preload="metadata"></video>' +
+        '<div class="pname">' + esc(prettify(p.path)) + " · " + (p.size / 1048576).toFixed(1) + "MB</div>" +
+        '<div class="pacts">' +
+          '<button class="ok"  data-ok="'  + i + '">אשר לפיד</button>' +
+          '<button class="no"  data-no="'  + i + '">דחה ומחק</button>' +
+        "</div>" +
+        '<div class="pstat"></div>' +
+      "</div>").join("");
+
+    const busy = (row, msg) => {
+      $$("button", row).forEach(b => (b.disabled = true));
+      $(".pstat", row).textContent = msg;
+    };
+    const free = row => {
+      $$("button", row).forEach(b => (b.disabled = false));
+      $(".pstat", row).textContent = "";
+    };
+
+    $$("[data-ok]", s).forEach(b => b.addEventListener("click", async () => {
+      const p = list[+b.dataset.ok], row = b.closest(".pend");
+      busy(row, "מאשר…");
+      try {
+        await ghMoveOrDelete(p.path, approvedPathFor(p.path), p.sha, "אישור סרטון: " + p.path.split("/").pop());
+        toast("אושר — יופיע בפיד");
+        await render();
+      } catch (e) { free(row); toast("לא אושר — " + uploadError(e)); }
+    }));
+
+    $$("[data-no]", s).forEach(b => b.addEventListener("click", async () => {
+      const p = list[+b.dataset.no], row = b.closest(".pend");
+      if (!confirm("למחוק לצמיתות את \"" + prettify(p.path) + "\"?")) return;
+      busy(row, "מוחק…");
+      try {
+        await ghMoveOrDelete(p.path, null, null, "דחיית סרטון: " + p.path.split("/").pop());
+        toast("נדחה ונמחק");
+        await render();
+      } catch (e) { free(row); toast("לא נמחק — " + uploadError(e)); }
+    }));
+  };
+
+  await render();
+}
 
 async function openUpload() {
   // הענן אולי עדיין נטען — מחכים לו לפני שמחליטים מה להציג
@@ -1548,32 +1746,48 @@ async function openUpload() {
       '<button class="btn ghost" id="pick">בחר סרטון מהמכשיר</button>' +
       '<div id="picked" class="upinfo"></div>' +
       '<input id="vcap" class="upcap" maxlength="80" placeholder="כיתוב (אופציונלי)">' +
-      '<button class="btn" id="go" disabled>העלה לפיד</button>' +
+      '<button class="btn" id="go" disabled>שלח לאישור</button>' +
       '<div id="ups" class="upstat"></div>' +
-      "<p style=\"margin-top:12px\">עד 100MB לקובץ. מומלץ MP4 אנכי, עד ~30 שניות.</p>";
+      "<p style=\"margin-top:12px\">הסרטון לא עולה ישר לפיד — הוא נשלח לבדיקת המנהל, " +
+      "ומופיע רק אחרי שאושר. עד 100MB לקובץ, מומלץ MP4 אנכי עד ~30 שניות.</p>";
 
     const fileInput = $("#vfile", s), go = $("#go", s), info = $("#picked", s), st = $("#ups", s);
     $("#pick", s).addEventListener("click", () => fileInput.click());
 
-    fileInput.addEventListener("change", () => {
+    fileInput.addEventListener("change", async () => {
       const f = fileInput.files && fileInput.files[0];
+      info.classList.remove("bad");
       if (!f) { info.textContent = ""; go.disabled = true; return; }
-      const mb = f.size / 1048576;
-      info.textContent = f.name + " · " + mb.toFixed(1) + "MB";
-      if (mb > 100) { info.textContent += " — גדול מדי, המקסימום 100MB"; go.disabled = true; }
-      else go.disabled = false;
+
+      info.textContent = "בודק את הקובץ…";
+      go.disabled = true;
+      const bad = await rejectReason(f);
+      if (bad) {
+        info.classList.add("bad");
+        info.textContent = "✕ " + bad;
+        fileInput.value = "";          // לא משאירים קובץ פסול תקוע בטופס
+        return;
+      }
+      info.textContent = "✓ " + f.name + " · " + (f.size / 1048576).toFixed(1) + "MB";
+      go.disabled = false;
     });
 
     go.addEventListener("click", async () => {
       const f = fileInput.files && fileInput.files[0];
       if (!f) return;
+
+      const bad = await rejectReason(f);      // בדיקה שנייה, ממש לפני הכתיבה לרפו
+      if (bad) { toast("נחסם — " + bad); fileInput.value = ""; info.textContent = ""; go.disabled = true; return; }
+
       go.disabled = true; go.style.opacity = ".6";
       $("#pick", s).disabled = true;
       try {
         await ghCommitFile(f, $("#vcap", s).value, m => { st.textContent = m; });
-        st.textContent = "עלה! טוען מחדש…";
-        toast("הסרטון עלה לרפו");
-        setTimeout(() => location.reload(), 2500);
+        st.textContent = "נשלח ✓ ממתין לאישור המנהל";
+        toast("הסרטון נשלח לאישור");
+        $("#pick", s).disabled = false;
+        fileInput.value = "";
+        info.textContent = "";
       } catch (e) {
         st.textContent = "";
         toast("ההעלאה נכשלה — " + uploadError(e));
@@ -1644,8 +1858,18 @@ $("#btnMe").addEventListener("click", () => {
     head +
     "<p>" + status + "</p>" +
     "<p><b>" + mine + "</b> לייקים · <b>" + favs + "</b> שמורים · <b>" + items.length + "</b> סרטונים בענן</p>" +
+    (isAdmin() ? '<button class="btn" id="review">ממתינים לאישור<span id="pcount"></span></button>' : "") +
     (signedIn() ? '<button class="btn ghost" id="gso">להתנתק</button>' : "") +
     '<a class="btn ghost" href="' + repoUrl + '" target="_blank" rel="noopener">לנהל את הסרטונים בגיטהאב</a>');
+
+  const rev = $("#review", s);
+  if (rev) {
+    rev.addEventListener("click", openReview);
+    listPending().then(l => {
+      const c = $("#pcount", s);
+      if (c) c.textContent = l.length ? " (" + l.length + ")" : " (0)";
+    }).catch(() => {});
+  }
 
   const si = $("#gsi3", s);
   if (si) si.addEventListener("click", e => doSignIn(e.currentTarget));
