@@ -27,7 +27,8 @@
      אזור eur3 (אירופה) ▸ production mode
 
   3) Build ▸ Authentication ▸ Get started
-     ▸ Sign-in method ▸ Anonymous ▸ Enable
+     ▸ Sign-in method ▸ Google ▸ Enable
+       (בוחרים שם ציבורי לפרויקט + אימייל תמיכה) ▸ Save
      ▸ Settings ▸ Authorized domains ▸ Add domain:
        0772292196ai-oss.github.io
 
@@ -39,10 +40,15 @@
   service cloud.firestore {
     match /databases/{database}/documents {
 
+      function googleUser() {
+        return request.auth != null
+               && request.auth.token.firebase.sign_in_provider == 'google.com';
+      }
+
       match /videos/{vid} {
         allow read: if true;
 
-        allow write: if request.auth != null
+        allow write: if googleUser()
                      && request.resource.data.keys().hasOnly(['likes', 'comments'])
                      && (!('likes' in request.resource.data)
                          || (request.resource.data.likes is int && request.resource.data.likes >= 0))
@@ -51,22 +57,22 @@
 
         match /likes/{uid} {
           allow read:   if true;
-          allow create: if request.auth != null && request.auth.uid == uid;
-          allow delete: if request.auth != null && request.auth.uid == uid;
+          allow create: if googleUser() && request.auth.uid == uid;
+          allow delete: if googleUser() && request.auth.uid == uid;
           allow update: if false;
         }
 
         match /comments/{cid} {
           allow read: if true;
-          allow create: if request.auth != null
+          allow create: if googleUser()
                         && request.resource.data.uid == request.auth.uid
                         && request.resource.data.text is string
                         && request.resource.data.text.size() > 0
                         && request.resource.data.text.size() <= 300
                         && request.resource.data.name is string
                         && request.resource.data.name.size() > 0
-                        && request.resource.data.name.size() <= 24;
-          allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+                        && request.resource.data.name.size() <= 60;
+          allow delete: if googleUser() && resource.data.uid == request.auth.uid;
           allow update: if false;
         }
       }
@@ -78,7 +84,8 @@
   }
   ---------------------------------------------------------------------------
 
-     בלי השלב הזה כל אחד באינטרנט יוכל למחוק לך את כל הנתונים.
+     החוקים האלה הם מה שבאמת אוכף שרק מחוברי Google יכולים ללייק ולהגיב,
+     ובלעדיהם כל אחד באינטרנט יוכל למחוק לך את כל הנתונים.
 
   5) ⚙ Project settings ▸ Your apps ▸ </> ▸ Register app
      מעתיקים 4 ערכים מתוך firebaseConfig אל CONFIG.firebase למטה.
@@ -86,7 +93,7 @@
      מה שמגן על הנתונים זה החוקים משלב 4.
 
   לא עובד? F12 ▸ Console ▸ מחפשים [cloud]
-     admin-restricted-operation ....... לא הפעלת Anonymous (שלב 3)
+     operation-not-allowed ............ לא הפעלת Google (שלב 3)
      permission-denied ................ החוקים לא פורסמו (שלב 4)
      auth/unauthorized-domain ......... הדומיין לא ברשימה (שלב 3)
      NOT_FOUND / not been started ..... אין בסיס נתונים (שלב 2)
@@ -448,6 +455,37 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
     margin-inline-end:6px;vertical-align:middle;
   }
   .dot-off{background:var(--dimmer)}
+  .cmt .av img, .me-av{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}
+  .btn.google{
+    background:#fff;color:#1f1f1f;border:1px solid rgba(0,0,0,.1);
+  }
+  .btn.google svg{width:19px;height:19px}
+  .signin-note{
+    display:flex;align-items:center;gap:10px;padding:12px 16px;
+    border-top:1px solid var(--line);font-size:13.5px;color:var(--dim);
+  }
+  .signin-note button{
+    margin-inline-start:auto;background:#fff;color:#1f1f1f;font-weight:800;
+    border-radius:999px;padding:9px 15px;font-size:13.5px;white-space:nowrap;
+    display:flex;align-items:center;gap:7px;
+  }
+  .signin-note button svg{width:16px;height:16px}
+  .me-row{display:flex;align-items:center;gap:11px;margin-bottom:14px}
+  .me-row .pic{
+    width:46px;height:46px;border-radius:50%;flex:0 0 auto;overflow:hidden;
+    background:linear-gradient(140deg,#333,#555);
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;
+  }
+  .me-row .nm{font-weight:800;font-size:15.5px}
+  .me-row .sub{font-size:12.5px;color:var(--dimmer);margin-top:2px}
+  .upinfo{font-size:13px;color:var(--dim);text-align:center;margin:8px 0 2px;min-height:18px}
+  .upcap{
+    width:100%;background:rgba(255,255,255,.1);border:0;border-radius:10px;
+    padding:12px 14px;color:#fff;font-size:14.5px;outline:none;margin:8px 0 10px;
+  }
+  .upstat{font-size:13px;color:var(--accent-2);text-align:center;margin-top:10px;min-height:18px}
+  .btn:disabled{opacity:.5}
+  .btn svg{flex:0 0 auto}
 
   /* ---------- מסך פתיחה / ריק ---------- */
   .full{
@@ -583,10 +621,69 @@ const done = window.__cloudDone;
 
     const app = core.initializeApp(cfg);
     const db  = fs.getFirestore(app);
+    const a   = auth.getAuth(app);
+    const provider = new auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
 
-    // זהות אנונימית — כדי שלכל גולש יהיה uid משלו בלי הרשמה
-    const cred = await auth.signInAnonymously(auth.getAuth(app));
-    api.uid = cred.user.uid;
+    /* ---- התחברות עם Google ----
+       הצפייה בפיד פתוחה לכולם. לייק ותגובה דורשים חשבון Google,
+       וגם חוקי האבטחה ב-Firestore אוכפים את זה בצד השרת. */
+    api.user = null;
+    let onUserCb = null;
+    api.onUser = cb => { onUserCb = cb; cb(api.user); };
+
+    // חזרה מהפניה (בטלפון, כשחלון קופץ נחסם)
+    try { await auth.getRedirectResult(a); }
+    catch (e) { console.warn("[cloud] redirect:", e && e.code); }
+
+    await new Promise(res => {
+      let first = true;
+      auth.onAuthStateChanged(a, u => {
+        api.user = u ? {
+          uid:   u.uid,
+          name:  u.displayName || (u.email || "").split("@")[0] || "משתמש",
+          photo: u.photoURL || ""
+        } : null;
+        api.uid = u ? u.uid : null;
+        if (first) { first = false; res(); }
+        else if (onUserCb) onUserCb(api.user);
+      });
+    });
+
+    api.signIn = async () => {
+      try {
+        await auth.signInWithPopup(a, provider);
+      } catch (e) {
+        const c = (e && e.code) || "";
+        if (/popup-blocked|operation-not-supported|web-storage-unsupported/.test(c)) {
+          await auth.signInWithRedirect(a, provider);   // נפילה להפניה מלאה
+          return;
+        }
+        throw e;
+      }
+    };
+    api.signOut = () => auth.signOut(a);
+
+    /* ---- התחברות ל-GitHub, רק בשביל העלאת סרטונים ----
+       רצה על מופע Firebase נפרד כדי לא לדרוס את הסשן של Google,
+       והטוקן נשאר בזיכרון בלבד — לא נשמר בדפדפן. */
+    api.ghToken = null;
+    api.ghLogin = null;
+    api.ghSignIn = async () => {
+      if (!api._a2) {
+        const app2 = core.initializeApp(cfg, "uploader");
+        api._a2 = auth.getAuth(app2);
+        try { await auth.setPersistence(api._a2, auth.inMemoryPersistence); } catch {}
+      }
+      const p = new auth.GithubAuthProvider();
+      p.addScope("public_repo");
+      const res  = await auth.signInWithPopup(api._a2, p);
+      const cred = auth.GithubAuthProvider.credentialFromResult(res);
+      api.ghToken = (cred && cred.accessToken) || null;
+      const info  = res.user && res.user.reloadUserInfo;
+      api.ghLogin = (info && info.screenName) || (res.user && res.user.displayName) || "github";
+      return api.ghToken;
+    };
 
     const vdoc  = k => fs.doc(db, "videos", k);
     const likeD = k => fs.doc(db, "videos", k, "likes", api.uid);
@@ -622,7 +719,11 @@ const done = window.__cloudDone;
 
     api.addComment = async (k, name, text) => {
       const b = fs.writeBatch(db);
-      b.set(fs.doc(cmts(k)), { uid: api.uid, name, text, at: fs.serverTimestamp() });
+      b.set(fs.doc(cmts(k)), {
+        uid: api.uid, name, text,
+        photo: (api.user && api.user.photo) || "",
+        at: fs.serverTimestamp()
+      });
       b.set(vdoc(k), { comments: fs.increment(1) }, { merge: true });
       await b.commit();
     };
@@ -744,6 +845,8 @@ function srcsFor(path) {
 function prettify(path) {
   return decodeURIComponent(path.split("/").pop())
     .replace(VIDEO_EXT, "")
+    .replace(/^\d{8}-/, "")          // חותמת התאריך שההעלאה מהאתר מוסיפה
+    .replace(/-[a-z0-9]{4}$/i, "")   // והסיומת האקראית
     .replace(/[-_]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -957,9 +1060,7 @@ function setActive(i) {
     if (j !== i) { c.video.pause(); c.video.currentTime = 0; }
   });
   const c = cards[i];
-  if (CL.on && !liked.has(c.key)) {
-    CL.hasLiked(c.key).then(v => { liked.set(c.key, v); paintCounts(c); });
-  }
+  refreshLiked(c);
   c.video.muted = muted;
   c.video.play().catch(() => {
     // הדפדפן חסם ניגון עם קול — חוזרים להשתקה
@@ -1018,6 +1119,12 @@ function toggleFlag(bucket, key, force) {
   store.set(bucket, m);
   return on;
 }
+/** בודק מול השרת אם המשתמש הנוכחי כבר עשה לייק לכרטיס הזה */
+function refreshLiked(c) {
+  if (!c || !CL.on || !CL.user || liked.has(c.key)) return;
+  CL.hasLiked(c.key).then(v => { liked.set(c.key, v); paintCounts(c); });
+}
+
 /** מצייר את המונים של כרטיס — מהענן אם יש, אחרת מקומי */
 function paintCounts(card) {
   const el = card.el, k = card.key, p = card.item.path;
@@ -1040,7 +1147,39 @@ function bumpHeart(card) {
     { duration: 260 });
 }
 
+/* ---- התחברות עם Google ---- */
+const G_SVG = '<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.3 13.2 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9.1h12.4c-.5 2.9-2.2 5.3-4.7 7l7.6 5.9c4.4-4.1 6.8-10.1 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.8-6.1C1 16.3 0 20 0 24s1 7.7 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.8 2.3-8.3 2.3-6.3 0-11.7-3.7-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>';
+
+function signedIn() { return !!(CL.on && CL.user); }
+
+async function doSignIn(btn) {
+  if (btn) { btn.disabled = true; btn.style.opacity = ".6"; }
+  try {
+    await CL.signIn();
+    closeSheet();
+    if (CL.user) toast("שלום " + CL.user.name);
+  } catch (e) {
+    const c = (e && e.code) || "";
+    if (!/popup-closed-by-user|cancelled-popup-request/.test(c)) {
+      toast("ההתחברות נכשלה — " + cloudErr(e));
+    }
+  }
+  if (btn) { btn.disabled = false; btn.style.opacity = ""; }
+}
+
+/** מגירה שמסבירה למה צריך להתחבר */
+function needLogin(what) {
+  const s = sheet("צריך להתחבר",
+    "<p>" + esc(what) + " אפשר רק עם חשבון Google.</p>" +
+    "<p>ככה לכל לייק ולכל תגובה יש בעלים אמיתי, ואי אפשר להצביע פעמיים. " +
+    "נשמרים רק השם ותמונת הפרופיל מהחשבון — שום דבר מעבר, ואין גישה לשום דבר אחר אצלך בגוגל.</p>" +
+    '<button class="btn google" id="gsi">' + G_SVG + "להתחבר עם Google</button>");
+  $("#gsi", s).addEventListener("click", e => doSignIn(e.currentTarget));
+}
+
 async function setLike(card, force) {
+  if (CL.on && !CL.user) { needLogin("לעשות לייק"); return; }
+
   if (!CL.on) {                                   // מצב מקומי
     const on = toggleFlag("likes", card.item.path, force);
     paintCounts(card);
@@ -1127,8 +1266,11 @@ function timeAgo(ts) {
 }
 
 function commentRow(c, mine) {
+  const av = c.photo
+    ? '<img class="me-av" src="' + esc(c.photo) + '" alt="" referrerpolicy="no-referrer">'
+    : esc((c.name || "?").charAt(0).toUpperCase());
   return '<div class="cmt">' +
-    '<div class="av">' + esc((c.name || "?").charAt(0).toUpperCase()) + "</div>" +
+    '<div class="av">' + av + "</div>" +
     '<div class="txt">' +
       '<div class="nm">' + esc(c.name || "אנונימי") + " · " + timeAgo(c.at) + "</div>" +
       '<div class="bd">' + esc(c.text) + "</div>" +
@@ -1145,19 +1287,21 @@ function openComments(card) {
 /* ---- תגובות אמיתיות, משותפות, בזמן אמת ---- */
 function cloudComments(card) {
   const k = card.key;
-  const s = sheet("תגובות", '<div class="empty-note">טוען…</div>', COMMENT_FORM);
-  const input = $(".cmtForm input", s);
+  const footer = signedIn()
+    ? COMMENT_FORM
+    : '<div class="signin-note"><span>כדי להגיב צריך חשבון Google</span>' +
+      '<button id="gsi2">' + G_SVG + "התחבר</button></div>";
+
+  const s = sheet("תגובות", '<div class="empty-note">טוען…</div>', footer);
   let list = [];
 
   const draw = () => {
-    $(".body", s).innerHTML = list.length
-      ? '<div class="who">מגיב בשם <b>' + esc(myName()) + '</b> · <button id="rename">שנה</button></div>' +
-        list.map(c => commentRow(c, c.uid === CL.uid)).join("")
-      : '<div class="who">מגיב בשם <b>' + esc(myName()) + '</b> · <button id="rename">שנה</button></div>' +
-        '<div class="empty-note">אין עדיין תגובות.<br>תהיה הראשון לכתוב.</div>';
-
-    const rn = $("#rename", s);
-    if (rn) rn.addEventListener("click", () => { if (askName()) draw(); });
+    const who = signedIn()
+      ? '<div class="who">מגיב בשם <b>' + esc(CL.user.name) + "</b></div>"
+      : "";
+    $(".body", s).innerHTML = who + (list.length
+      ? list.map(c => commentRow(c, CL.user && c.uid === CL.user.uid)).join("")
+      : '<div class="empty-note">אין עדיין תגובות.<br>תהיה הראשון לכתוב.</div>');
 
     $$("[data-del]", s).forEach(b => b.addEventListener("click", async () => {
       b.disabled = true;
@@ -1175,13 +1319,18 @@ function cloudComments(card) {
     draw();
   });
 
+  const gsi = $("#gsi2", s);
+  if (gsi) { gsi.addEventListener("click", e => doSignIn(e.currentTarget)); return; }
+
+  const input = $(".cmtForm input", s);
   $(".cmtForm", s).addEventListener("submit", async e => {
     e.preventDefault();
     const t = input.value.trim();
     if (!t) return;
+    if (!signedIn()) { needLogin("להגיב"); return; }
     input.value = "";
     input.disabled = true;
-    try { await CL.addComment(k, myName(), t); }
+    try { await CL.addComment(k, CL.user.name, t); }
     catch (err) { input.value = t; toast("התגובה לא נשלחה — " + cloudErr(err)); }
     input.disabled = false;
     input.focus();
@@ -1245,20 +1394,196 @@ function toast(msg) {
 const uploadUrl = `https://github.com/${C.owner}/${C.repo}/upload/${C.branch}/${(C.videosDir || "").replace(/\/+$/, "")}`;
 const repoUrl   = `https://github.com/${C.owner}/${C.repo}`;
 
-function openUpload() {
-  sheet("להוסיף סרטון",
-    "<ol>" +
-    "<li>פותחים את <b>הרפו בגיטהאב</b> ונכנסים לתיקייה <code>" + esc(C.videosDir || "/") + "</code></li>" +
-    "<li>לוחצים <b>Add file ▸ Upload files</b> וגוררים לשם קובצי <code>.mp4</code></li>" +
-    "<li>לוחצים <b>Commit changes</b></li>" +
-    "<li>מרעננים את הדף כאן — הסרטונים מופיעים בפיד לבד</li>" +
-    "</ol>" +
-    "<p>מגבלות גיטהאב: עד <b>100MB</b> לקובץ. לסרטון אנכי כדאי MP4 ‏(H.264 + AAC), רזולוציה 1080×1920, ‏ועד ~30 שניות כדי שייטען מהר.</p>" +
-    '<a class="btn" href="' + uploadUrl + '" target="_blank" rel="noopener">' +
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17V4M7 9l5-5 5 5M4 19h16"/></svg>' +
-    "פתח את עמוד ההעלאה</a>" +
-    '<a class="btn ghost" href="' + repoUrl + '" target="_blank" rel="noopener">לרפו המלא</a>'
-  );
+/* ============================================================
+   העלאת סרטון מהאתר ישירות לרפו בגיטהאב
+   ============================================================ */
+const GH_API = "https://api.github.com";
+
+function ghHeaders() {
+  return {
+    Authorization: "Bearer " + CL.ghToken,
+    Accept: "application/vnd.github+json",
+    "Content-Type": "application/json"
+  };
+}
+
+async function ghFetch(path, opts) {
+  const r = await fetch(GH_API + path, Object.assign({ headers: ghHeaders() }, opts || {}));
+  const txt = await r.text();
+  let body = null;
+  try { body = txt ? JSON.parse(txt) : null; } catch {}
+  if (!r.ok) {
+    const msg = (body && body.message) || ("HTTP " + r.status);
+    const e = new Error(msg);
+    e.status = r.status;
+    throw e;
+  }
+  return body;
+}
+
+/** קובץ → base64 נקי (בלי הקידומת data:) */
+function toBase64(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onerror = () => rej(new Error("לא הצלחתי לקרוא את הקובץ"));
+    fr.onload  = () => res(String(fr.result).split(",")[1] || "");
+    fr.readAsDataURL(file);
+  });
+}
+
+function slugify(s) {
+  return (s || "").trim().toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+/** מעלה קובץ אחד כקומיט. onStep מדווח התקדמות. */
+async function ghCommitFile(file, caption, onStep) {
+  const o = CONFIG.owner, r = CONFIG.repo, br = CONFIG.branch;
+  const dir = (CONFIG.videosDir || "").replace(/^\/+|\/+$/g, "");
+  const ext = (file.name.match(/\.[a-z0-9]+$/i) || [".mp4"])[0].toLowerCase();
+  const base = slugify(caption) || slugify(file.name.replace(/\.[^.]+$/, "")) || "clip";
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const path = (dir ? dir + "/" : "") + stamp + "-" + base + "-" + Math.random().toString(36).slice(2, 6) + ext;
+
+  onStep("קורא את הקובץ…");
+  const content = await toBase64(file);
+
+  onStep("מאתר את הענף…");
+  const ref = await ghFetch(`/repos/${o}/${r}/git/ref/heads/${br}`);
+  const headSha = ref.object.sha;
+
+  onStep("מעלה את הווידאו…");
+  const blob = await ghFetch(`/repos/${o}/${r}/git/blobs`, {
+    method: "POST",
+    body: JSON.stringify({ content, encoding: "base64" })
+  });
+
+  onStep("בונה את הקומיט…");
+  const headCommit = await ghFetch(`/repos/${o}/${r}/git/commits/${headSha}`);
+  const tree = await ghFetch(`/repos/${o}/${r}/git/trees`, {
+    method: "POST",
+    body: JSON.stringify({
+      base_tree: headCommit.tree.sha,
+      tree: [{ path, mode: "100644", type: "blob", sha: blob.sha }]
+    })
+  });
+  const commit = await ghFetch(`/repos/${o}/${r}/git/commits`, {
+    method: "POST",
+    body: JSON.stringify({
+      message: "הוספת סרטון: " + (caption || path),
+      tree: tree.sha,
+      parents: [headSha]
+    })
+  });
+
+  onStep("מפרסם…");
+  await ghFetch(`/repos/${o}/${r}/git/refs/heads/${br}`, {
+    method: "PATCH",
+    body: JSON.stringify({ sha: commit.sha })
+  });
+
+  return path;
+}
+
+function uploadError(e) {
+  const m = (e && e.message) || "";
+  if (e && e.status === 404) return "אין לך הרשאת כתיבה לרפו הזה.";
+  if (e && e.status === 403) return "GitHub חסם את הבקשה (הרשאות או מגבלת קצב).";
+  if (e && e.status === 409) return "מישהו דחף שינוי באותו רגע. נסה שוב.";
+  if (e && e.status === 422) return "הקובץ נדחה — אולי הוא גדול מדי (מעל 100MB).";
+  return m || "שגיאה לא ידועה";
+}
+
+const GH_SVG = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
+
+async function openUpload() {
+  // הענן אולי עדיין נטען — מחכים לו לפני שמחליטים מה להציג
+  if (!CL.on && !CL.error) {
+    sheet("להוסיף סרטון", '<div class="empty-note">מתחבר…</div>', "");
+    await window.cloudReady;
+    if (!openSheet) return;        // המשתמש סגר בינתיים
+  }
+
+  if (!CL.on) {
+    sheet("להוסיף סרטון",
+      "<p>העלאה מהאתר דורשת חיבור ל-Firebase (הוא מטפל בהתחברות ל-GitHub). כרגע האפליקציה במצב מקומי.</p>" +
+      '<a class="btn ghost" href="' + uploadUrl + '" target="_blank" rel="noopener">להעלות דרך גיטהאב</a>');
+    return;
+  }
+
+  const s = sheet("להוסיף סרטון",
+    '<div id="upBody"></div>',
+    "");
+
+  const draw = () => {
+    const body = $("#upBody", s);
+    if (!CL.ghToken) {
+      body.innerHTML =
+        "<p>הסרטונים נשמרים ברפו <code>" + esc(C.owner + "/" + C.repo) + "</code>. " +
+        "כדי להעלות מכאן צריך להתחבר ל-GitHub עם חשבון שיש לו הרשאת כתיבה לרפו.</p>" +
+        '<button class="btn" id="ghlogin">' + GH_SVG + "להתחבר עם GitHub</button>" +
+        '<a class="btn ghost" href="' + uploadUrl + '" target="_blank" rel="noopener">או להעלות ידנית בגיטהאב</a>';
+      $("#ghlogin", s).addEventListener("click", async e => {
+        const b = e.currentTarget;
+        b.disabled = true; b.style.opacity = ".6";
+        try { await CL.ghSignIn(); draw(); }
+        catch (err) {
+          const c = (err && err.code) || "";
+          if (/popup-blocked/.test(c)) toast("הדפדפן חסם את חלון ההתחברות — אשר חלונות קופצים ונסה שוב");
+          else if (!/popup-closed-by-user|cancelled-popup-request/.test(c)) {
+            toast("ההתחברות נכשלה — " + ((err && err.message) || c));
+          }
+          b.disabled = false; b.style.opacity = "";
+        }
+      });
+      return;
+    }
+
+    body.innerHTML =
+      '<p>מחובר כ-<b>' + esc(CL.ghLogin || "github") + "</b></p>" +
+      '<input type="file" id="vfile" accept="video/*" style="display:none">' +
+      '<button class="btn ghost" id="pick">בחר סרטון מהמכשיר</button>' +
+      '<div id="picked" class="upinfo"></div>' +
+      '<input id="vcap" class="upcap" maxlength="80" placeholder="כיתוב (אופציונלי)">' +
+      '<button class="btn" id="go" disabled>העלה לפיד</button>' +
+      '<div id="ups" class="upstat"></div>' +
+      "<p style=\"margin-top:12px\">עד 100MB לקובץ. מומלץ MP4 אנכי, עד ~30 שניות.</p>";
+
+    const fileInput = $("#vfile", s), go = $("#go", s), info = $("#picked", s), st = $("#ups", s);
+    $("#pick", s).addEventListener("click", () => fileInput.click());
+
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) { info.textContent = ""; go.disabled = true; return; }
+      const mb = f.size / 1048576;
+      info.textContent = f.name + " · " + mb.toFixed(1) + "MB";
+      if (mb > 100) { info.textContent += " — גדול מדי, המקסימום 100MB"; go.disabled = true; }
+      else go.disabled = false;
+    });
+
+    go.addEventListener("click", async () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      go.disabled = true; go.style.opacity = ".6";
+      $("#pick", s).disabled = true;
+      try {
+        await ghCommitFile(f, $("#vcap", s).value, m => { st.textContent = m; });
+        st.textContent = "עלה! טוען מחדש…";
+        toast("הסרטון עלה לרפו");
+        setTimeout(() => location.reload(), 2500);
+      } catch (e) {
+        st.textContent = "";
+        toast("ההעלאה נכשלה — " + uploadError(e));
+        go.disabled = false; go.style.opacity = "";
+        $("#pick", s).disabled = false;
+      }
+    });
+  };
+
+  draw();
 }
 $("#btnUpload").addEventListener("click", openUpload);
 
@@ -1300,14 +1625,36 @@ $("#btnMe").addEventListener("click", () => {
         ? "הענן לא זמין (" + esc(CL.error) + ") — נשמר במכשיר בלבד."
         : "מצב מקומי — לייקים ותגובות נשמרים במכשיר הזה בלבד. למצב משותף מלא את CONFIG.firebase.");
 
+  let head;
+  if (signedIn()) {
+    const u = CL.user;
+    head = '<div class="me-row"><div class="pic">' +
+      (u.photo ? '<img class="me-av" src="' + esc(u.photo) + '" alt="" referrerpolicy="no-referrer">'
+               : esc(u.name.charAt(0).toUpperCase())) +
+      '</div><div><div class="nm">' + esc(u.name) + '</div>' +
+      '<div class="sub">מחובר עם Google</div></div></div>';
+  } else if (CL.on) {
+    head = '<p>אתה גולש כאורח. אפשר לצפות בהכל, אבל לייק ותגובה דורשים חשבון Google.</p>' +
+           '<button class="btn google" id="gsi3">' + G_SVG + "להתחבר עם Google</button>";
+  } else {
+    head = "";
+  }
+
   const s = sheet("אני",
+    head +
     "<p>" + status + "</p>" +
-    "<p>השם שלך בתגובות: <b>" + esc(myName()) + '</b> · <button id="rename2" style="color:var(--accent-2);font-weight:700">שנה</button></p>' +
     "<p><b>" + mine + "</b> לייקים · <b>" + favs + "</b> שמורים · <b>" + items.length + "</b> סרטונים בענן</p>" +
-    (CL.on ? "<p>המזהה האנונימי שלך: <code>" + esc((CL.uid || "").slice(0, 10)) + "…</code></p>" : "") +
+    (signedIn() ? '<button class="btn ghost" id="gso">להתנתק</button>' : "") +
     '<a class="btn ghost" href="' + repoUrl + '" target="_blank" rel="noopener">לנהל את הסרטונים בגיטהאב</a>');
 
-  $("#rename2", s).addEventListener("click", () => { if (askName()) closeSheet(); });
+  const si = $("#gsi3", s);
+  if (si) si.addEventListener("click", e => doSignIn(e.currentTarget));
+  const so = $("#gso", s);
+  if (so) so.addEventListener("click", async () => {
+    await CL.signOut();
+    closeSheet();
+    toast("התנתקת");
+  });
 });
 
 $$(".tabs button").forEach(b => b.addEventListener("click", e => {
@@ -1385,11 +1732,23 @@ async function start() {
   ]);
   cards = items.map(buildCard);
 
-  if (CL.on) {
+  const wireCloud = () => {
+    if (!CL.on) {
+      if (CL.error) setTimeout(() => toast("הענן לא זמין — " + cloudErr({ code: CL.error })), 1400);
+      return;
+    }
     CL.watchStats(m => { Object.assign(stats, m); cards.forEach(paintCounts); });
-  } else if (CL.error) {
-    setTimeout(() => toast("הענן לא זמין — " + cloudErr({ code: CL.error })), 1400);
-  }
+    // התחברות או התנתקות — הלייקים האישיים שייכים למשתמש, אז מאפסים ובודקים מחדש
+    CL.onUser(() => {
+      liked.clear();
+      cards.forEach(paintCounts);
+      refreshLiked(cards[active]);
+    });
+  };
+
+  // אם הענן איחר לענות, מחברים אותו כשהוא מגיע במקום לוותר עליו
+  if (CL.on || CL.error) wireCloud();
+  else window.cloudReady.then(() => { cards.forEach(paintCounts); wireCloud(); });
 
   // מעקב אחרי הסרטון שבמסך
   const io = new IntersectionObserver(entries => {
