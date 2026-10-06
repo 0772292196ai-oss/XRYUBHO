@@ -1,4 +1,100 @@
 <!doctype html>
+<!--
+=========================================================================
+  פיד סרטונים — הכל בקובץ אחד.
+  הסרטונים נמשכים מהרפו בגיטהאב. לייקים ותגובות: מקומי, או אמיתי עם Firebase.
+=========================================================================
+
+  להוסיף סרטון
+  ------------
+  מעלים קובץ .mp4 לרפו (לשורש או לתיקיית videos/) ומרעננים. זה הכל.
+  עד 100MB לקובץ. מומלץ MP4 (H.264+AAC), 1080x1920, עד ~30 שניות.
+  הסדר לפי שם הקובץ — לכן כדאי 01-, 02-, 03-...
+
+  לשנות את השם של האפליקציה
+  --------------------------
+  למטה בבלוק CONFIG:  appName: "השם שלך"      (ריק = מוצג "בקרוב")
+
+
+=========================================================================
+  לייקים ותגובות אמיתיים — Firebase  (אופציונלי, 5 דקות)
+=========================================================================
+  בלי זה הכל עובד, פשוט כל אחד רואה רק את הלייקים והתגובות של עצמו.
+
+  1) console.firebase.google.com  ▸  Create a project
+
+  2) Build ▸ Firestore Database ▸ Create database
+     אזור eur3 (אירופה) ▸ production mode
+
+  3) Build ▸ Authentication ▸ Get started
+     ▸ Sign-in method ▸ Anonymous ▸ Enable
+     ▸ Settings ▸ Authorized domains ▸ Add domain:
+       0772292196ai-oss.github.io
+
+  4) Firestore ▸ Rules ▸ מוחקים הכל ▸ מדביקים את מה שבין הקווים ▸ Publish
+
+  ------------------------------- חוקי האבטחה -------------------------------
+  rules_version = '2';
+
+  service cloud.firestore {
+    match /databases/{database}/documents {
+
+      match /videos/{vid} {
+        allow read: if true;
+
+        allow write: if request.auth != null
+                     && request.resource.data.keys().hasOnly(['likes', 'comments'])
+                     && (!('likes' in request.resource.data)
+                         || (request.resource.data.likes is int && request.resource.data.likes >= 0))
+                     && (!('comments' in request.resource.data)
+                         || (request.resource.data.comments is int && request.resource.data.comments >= 0));
+
+        match /likes/{uid} {
+          allow read:   if true;
+          allow create: if request.auth != null && request.auth.uid == uid;
+          allow delete: if request.auth != null && request.auth.uid == uid;
+          allow update: if false;
+        }
+
+        match /comments/{cid} {
+          allow read: if true;
+          allow create: if request.auth != null
+                        && request.resource.data.uid == request.auth.uid
+                        && request.resource.data.text is string
+                        && request.resource.data.text.size() > 0
+                        && request.resource.data.text.size() <= 300
+                        && request.resource.data.name is string
+                        && request.resource.data.name.size() > 0
+                        && request.resource.data.name.size() <= 24;
+          allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+          allow update: if false;
+        }
+      }
+
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+  }
+  ---------------------------------------------------------------------------
+
+     בלי השלב הזה כל אחד באינטרנט יוכל למחוק לך את כל הנתונים.
+
+  5) ⚙ Project settings ▸ Your apps ▸ </> ▸ Register app
+     מעתיקים 4 ערכים מתוך firebaseConfig אל CONFIG.firebase למטה.
+     המפתחות האלה אמורים להיות גלויים בקוד — ככה Firebase עובד.
+     מה שמגן על הנתונים זה החוקים משלב 4.
+
+  לא עובד? F12 ▸ Console ▸ מחפשים [cloud]
+     admin-restricted-operation ....... לא הפעלת Anonymous (שלב 3)
+     permission-denied ................ החוקים לא פורסמו (שלב 4)
+     auth/unauthorized-domain ......... הדומיין לא ברשימה (שלב 3)
+     NOT_FOUND / not been started ..... אין בסיס נתונים (שלב 2)
+  במסך "אני" בתוך האפליקציה: נקודה ירוקה = הענן מחובר.
+
+  מכסה חינם: 50,000 קריאות ו-20,000 כתיבות ביום. לייק או תגובה = כתיבה אחת.
+=========================================================================
+-->
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
@@ -26,8 +122,24 @@ window.CONFIG = {
   videosDir: "videos",
 
   // שם המשתמש שיוצג מתחת לסרטון כברירת מחדל
-  defaultAuthor: "@user"
+  defaultAuthor: "@user",
+
+  /* ---- Firebase: לייקים ותגובות אמיתיים, משותפים לכל המשתמשים ----
+     כל עוד השדות ריקים — האפליקציה עובדת במצב מקומי (נשמר רק במכשיר).
+     איך ממלאים: קונסולת Firebase ▸ ⚙ Project settings ▸ Your apps ▸ Web (</>)
+     ▸ מעתיקים משם בדיוק את 4 הערכים האלה.
+     ההוראות המלאות (כולל חוקי האבטחה) בהערה בראש הקובץ הזה.  */
+  firebase: {
+    apiKey:     "",
+    authDomain: "",   // כמו: my-app.firebaseapp.com
+    projectId:  "",
+    appId:      ""
+  }
 };
+
+/* מוגדר כאן כדי שיהיה קיים לפני כל שאר הקוד */
+window.CLOUD = { on: false, uid: null, error: null };
+window.cloudReady = new Promise(r => { window.__cloudDone = r; });
 </script>
 
 <style>
@@ -320,7 +432,22 @@ window.CONFIG = {
     display:flex;align-items:center;justify-content:center;flex:0 0 auto;
   }
   .cmtForm button svg{width:18px;height:18px}
+  .cmtForm input:disabled{opacity:.5}
   .empty-note{text-align:center;color:var(--dimmer);font-size:13.5px;padding:26px 0}
+  .who{
+    font-size:12px;color:var(--dimmer);padding:0 0 8px;border-bottom:1px solid var(--line);
+    margin-bottom:4px;
+  }
+  .who b{color:var(--fg)}
+  .who button{color:var(--accent-2);font-size:12px;font-weight:700}
+  .cmt .del{opacity:.4;flex:0 0 auto;padding:4px}
+  .cmt .del svg{width:16px;height:16px}
+  .cmt .del:disabled{opacity:.15}
+  .dot-live{
+    display:inline-block;width:7px;height:7px;border-radius:50%;background:#2ecc71;
+    margin-inline-end:6px;vertical-align:middle;
+  }
+  .dot-off{background:var(--dimmer)}
 
   /* ---------- מסך פתיחה / ריק ---------- */
   .full{
@@ -433,6 +560,89 @@ window.CONFIG = {
   </section>
 </template>
 
+<!-- ============================================================
+     שכבת הענן: Firestore — לייקים ותגובות אמיתיים
+     נטען רק אם מילאת את CONFIG.firebase. אחרת הכל נשאר מקומי.
+     ============================================================ -->
+<script type="module">
+const api  = window.CLOUD;
+const done = window.__cloudDone;
+
+(async () => {
+  const cfg = (window.CONFIG.firebase) || {};
+  if (!cfg.apiKey || !cfg.projectId) { done(api); return; }   // לא מוגדר — מצב מקומי
+
+  try {
+    const V = "11.0.2";
+    const base = "https://www.gstatic.com/firebasejs/" + V + "/";
+    const [core, auth, fs] = await Promise.all([
+      import(base + "firebase-app.js"),
+      import(base + "firebase-auth.js"),
+      import(base + "firebase-firestore.js")
+    ]);
+
+    const app = core.initializeApp(cfg);
+    const db  = fs.getFirestore(app);
+
+    // זהות אנונימית — כדי שלכל גולש יהיה uid משלו בלי הרשמה
+    const cred = await auth.signInAnonymously(auth.getAuth(app));
+    api.uid = cred.user.uid;
+
+    const vdoc  = k => fs.doc(db, "videos", k);
+    const likeD = k => fs.doc(db, "videos", k, "likes", api.uid);
+    const cmts  = k => fs.collection(db, "videos", k, "comments");
+
+    /** מאזין אחד לכל המונים של כל הסרטונים */
+    api.watchStats = cb => fs.onSnapshot(
+      fs.collection(db, "videos"),
+      snap => { const m = {}; snap.forEach(d => (m[d.id] = d.data() || {})); cb(m); },
+      err => console.warn("[cloud] stats:", err.message)
+    );
+
+    /** האם המשתמש הזה כבר עשה לייק לסרטון */
+    api.hasLiked = async k => {
+      try { return (await fs.getDoc(likeD(k))).exists(); } catch { return false; }
+    };
+
+    /** לייק / ביטול לייק — מסמך אישי + עדכון המונה, בכתיבה אחת */
+    api.setLike = async (k, on) => {
+      const b = fs.writeBatch(db);
+      if (on) b.set(likeD(k), { at: fs.serverTimestamp() });
+      else    b.delete(likeD(k));
+      b.set(vdoc(k), { likes: fs.increment(on ? 1 : -1) }, { merge: true });
+      await b.commit();
+    };
+
+    /** תגובות בזמן אמת */
+    api.watchComments = (k, cb) => fs.onSnapshot(
+      fs.query(cmts(k), fs.orderBy("at", "desc"), fs.limit(200)),
+      snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => cb(null, err.message)
+    );
+
+    api.addComment = async (k, name, text) => {
+      const b = fs.writeBatch(db);
+      b.set(fs.doc(cmts(k)), { uid: api.uid, name, text, at: fs.serverTimestamp() });
+      b.set(vdoc(k), { comments: fs.increment(1) }, { merge: true });
+      await b.commit();
+    };
+
+    api.delComment = async (k, id) => {
+      const b = fs.writeBatch(db);
+      b.delete(fs.doc(db, "videos", k, "comments", id));
+      b.set(vdoc(k), { comments: fs.increment(-1) }, { merge: true });
+      await b.commit();
+    };
+
+    api.on = true;
+  } catch (e) {
+    api.error = (e && (e.code || e.message)) || String(e);
+    console.warn("[cloud] לא הצלחתי להתחבר ל-Firebase:", api.error);
+  }
+  done(api);
+})();
+</script>
+
 <script>
 (() => {
 "use strict";
@@ -458,6 +668,38 @@ let   items  = [];        // רשימת הסרטונים
 let   active = -1;
 let   muted  = store.get("muted", true);
 let   firstGestureDone = false;
+
+/* ---- ענן ---- */
+let   CL    = { on: false };   // ה-API מהסקריפט שלמעלה (או מצב מקומי)
+const stats = {};              // { vidKey: {likes, comments} } — מתעדכן בזמן אמת
+const liked = new Map();       // { vidKey: true/false } — הלייקים שלי
+
+/** מזהה יציב לסרטון, חוקי כ-document id ב-Firestore */
+function vidKey(path) {
+  let h = 0;
+  for (let i = 0; i < path.length; i++) h = (h * 31 + path.charCodeAt(i)) >>> 0;
+  const slug = path.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  return (slug || "v") + "-" + h.toString(36);
+}
+
+/** השם שמופיע על התגובות שלי */
+function myName() {
+  let n = store.get("name", "");
+  if (!n) { n = "אורח" + Math.floor(1000 + Math.random() * 9000); store.set("name", n); }
+  return n;
+}
+function askName() {
+  const n = (prompt("איך לקרוא לך בתגובות?", myName()) || "").trim().slice(0, 24);
+  if (n) { store.set("name", n); toast("מעכשיו אתה " + n); return true; }
+  return false;
+}
+
+function cloudErr(e) {
+  const c = (e && (e.code || e.message)) || "";
+  if (/permission-denied/i.test(c)) return "אין הרשאה. בדוק את חוקי האבטחה ב-Firestore.";
+  if (/unavailable|network/i.test(c)) return "אין חיבור לרשת.";
+  return c || "שגיאה לא ידועה";
+}
 
 /* ============================================================
    1. מיתוג — שם או "בקרוב"
@@ -658,13 +900,13 @@ function buildCard(item, i) {
   bar.addEventListener("pointerup", endDrag);
   bar.addEventListener("pointercancel", endDrag);
 
-  /* --- מצב שמור מקומית --- */
-  const likes = store.get("likes", {});
-  const favs  = store.get("favs", {});
-  $(".like", el).classList.toggle("on", !!likes[item.path]);
-  $(".nLike", el).textContent = fmt(baseCount(item.path, 12, 900) + (likes[item.path] ? 1 : 0));
-  $(".nCmt",  el).textContent = fmt((store.get("cmts", {})[item.path] || []).length);
-  if (favs[item.path]) { $(".fav", el).classList.add("on"); $(".nFav", el).textContent = "שמור ✓"; }
+  /* --- מונים ומצב --- */
+  card.key = vidKey(item.path);
+  if (store.get("favs", {})[item.path]) {
+    $(".fav", el).classList.add("on");
+    $(".nFav", el).textContent = "שמור ✓";
+  }
+  paintCounts(card);
 
   feed.appendChild(el);
   return card;
@@ -715,6 +957,9 @@ function setActive(i) {
     if (j !== i) { c.video.pause(); c.video.currentTime = 0; }
   });
   const c = cards[i];
+  if (CL.on && !liked.has(c.key)) {
+    CL.hasLiked(c.key).then(v => { liked.set(c.key, v); paintCounts(c); });
+  }
   c.video.muted = muted;
   c.video.play().catch(() => {
     // הדפדפן חסם ניגון עם קול — חוזרים להשתקה
@@ -773,12 +1018,56 @@ function toggleFlag(bucket, key, force) {
   store.set(bucket, m);
   return on;
 }
-function setLike(card, force) {
-  const on = toggleFlag("likes", card.item.path, force);
-  const btn = $(".like", card.el);
-  btn.classList.toggle("on", on);
-  $(".nLike", card.el).textContent = fmt(baseCount(card.item.path, 12, 900) + (on ? 1 : 0));
-  if (on) btn.animate([{ transform: "scale(1)" }, { transform: "scale(1.3)" }, { transform: "scale(1)" }], { duration: 260 });
+/** מצייר את המונים של כרטיס — מהענן אם יש, אחרת מקומי */
+function paintCounts(card) {
+  const el = card.el, k = card.key, p = card.item.path;
+  if (CL.on) {
+    const s = stats[k] || {};
+    $(".nLike", el).textContent = fmt(Math.max(0, s.likes || 0));
+    $(".nCmt",  el).textContent = fmt(Math.max(0, s.comments || 0));
+    $(".like",  el).classList.toggle("on", liked.get(k) === true);
+  } else {
+    const mine = !!store.get("likes", {})[p];
+    $(".nLike", el).textContent = fmt(baseCount(p, 12, 900) + (mine ? 1 : 0));
+    $(".nCmt",  el).textContent = fmt((store.get("cmts", {})[p] || []).length);
+    $(".like",  el).classList.toggle("on", mine);
+  }
+}
+
+function bumpHeart(card) {
+  $(".like", card.el).animate(
+    [{ transform: "scale(1)" }, { transform: "scale(1.3)" }, { transform: "scale(1)" }],
+    { duration: 260 });
+}
+
+async function setLike(card, force) {
+  if (!CL.on) {                                   // מצב מקומי
+    const on = toggleFlag("likes", card.item.path, force);
+    paintCounts(card);
+    if (on) bumpHeart(card);
+    return;
+  }
+
+  const k = card.key;
+  const cur = liked.get(k) === true;
+  const on  = force === undefined ? !cur : force;
+  if (on === cur) { if (on) bumpHeart(card); return; }   // דאבל-טאפ על לייק שכבר קיים
+
+  // עדכון אופטימי — הממשק מגיב מיד, הענן משלים אחריו
+  const s = (stats[k] = stats[k] || {});
+  liked.set(k, on);
+  s.likes = Math.max(0, (s.likes || 0) + (on ? 1 : -1));
+  paintCounts(card);
+  if (on) bumpHeart(card);
+
+  try {
+    await CL.setLike(k, on);
+  } catch (e) {
+    liked.set(k, cur);
+    s.likes = Math.max(0, (s.likes || 0) + (on ? -1 : 1));
+    paintCounts(card);
+    toast("הלייק לא נשמר — " + cloudErr(e));
+  }
 }
 function spawnHeart(el, x, y) {
   const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -801,7 +1090,7 @@ function share(card) {
 }
 
 /* --- מגירת תגובות --- */
-let openSheet = null;
+let openSheet = null, sheetCleanup = null;
 function sheet(title, bodyHtml, footerHtml) {
   closeSheet();
   const back = document.createElement("div"); back.className = "backdrop";
@@ -816,39 +1105,120 @@ function sheet(title, bodyHtml, footerHtml) {
   return s;
 }
 function closeSheet() {
+  if (sheetCleanup) { try { sheetCleanup(); } catch {} sheetCleanup = null; }
   if (!openSheet) return;
   openSheet.forEach(n => n.remove());
   openSheet = null;
 }
 
+const COMMENT_FORM =
+  '<form class="cmtForm"><input placeholder="הוסף תגובה…" maxlength="300" aria-label="תגובה">' +
+  '<button type="submit" aria-label="שלח"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 20l18-8L3 4l4 8-4 8z"/></svg></button></form>';
+
+function timeAgo(ts) {
+  const ms = !ts ? 0 : (typeof ts === "number" ? ts : (ts.toMillis ? ts.toMillis() : 0));
+  if (!ms) return "עכשיו";
+  const d = Math.floor((Date.now() - ms) / 1000);
+  if (d < 60) return "עכשיו";
+  if (d < 3600) return Math.floor(d / 60) + " דק׳";
+  if (d < 86400) return Math.floor(d / 3600) + " שע׳";
+  if (d < 2592000) return Math.floor(d / 86400) + " ימים";
+  return new Date(ms).toLocaleDateString("he-IL");
+}
+
+function commentRow(c, mine) {
+  return '<div class="cmt">' +
+    '<div class="av">' + esc((c.name || "?").charAt(0).toUpperCase()) + "</div>" +
+    '<div class="txt">' +
+      '<div class="nm">' + esc(c.name || "אנונימי") + " · " + timeAgo(c.at) + "</div>" +
+      '<div class="bd">' + esc(c.text) + "</div>" +
+    "</div>" +
+    (mine && c.id ? '<button class="del" data-del="' + esc(c.id) + '" aria-label="מחק">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button>' : "") +
+    "</div>";
+}
+
 function openComments(card) {
+  return CL.on ? cloudComments(card) : localComments(card);
+}
+
+/* ---- תגובות אמיתיות, משותפות, בזמן אמת ---- */
+function cloudComments(card) {
+  const k = card.key;
+  const s = sheet("תגובות", '<div class="empty-note">טוען…</div>', COMMENT_FORM);
+  const input = $(".cmtForm input", s);
+  let list = [];
+
+  const draw = () => {
+    $(".body", s).innerHTML = list.length
+      ? '<div class="who">מגיב בשם <b>' + esc(myName()) + '</b> · <button id="rename">שנה</button></div>' +
+        list.map(c => commentRow(c, c.uid === CL.uid)).join("")
+      : '<div class="who">מגיב בשם <b>' + esc(myName()) + '</b> · <button id="rename">שנה</button></div>' +
+        '<div class="empty-note">אין עדיין תגובות.<br>תהיה הראשון לכתוב.</div>';
+
+    const rn = $("#rename", s);
+    if (rn) rn.addEventListener("click", () => { if (askName()) draw(); });
+
+    $$("[data-del]", s).forEach(b => b.addEventListener("click", async () => {
+      b.disabled = true;
+      try { await CL.delComment(k, b.dataset.del); }
+      catch (e) { b.disabled = false; toast("לא נמחק — " + cloudErr(e)); }
+    }));
+  };
+
+  sheetCleanup = CL.watchComments(k, (docs, err) => {
+    if (err) {
+      $(".body", s).innerHTML = '<div class="empty-note">אין הרשאה לקרוא תגובות.<br>בדוק את חוקי האבטחה ב-Firestore.</div>';
+      return;
+    }
+    list = docs;
+    draw();
+  });
+
+  $(".cmtForm", s).addEventListener("submit", async e => {
+    e.preventDefault();
+    const t = input.value.trim();
+    if (!t) return;
+    input.value = "";
+    input.disabled = true;
+    try { await CL.addComment(k, myName(), t); }
+    catch (err) { input.value = t; toast("התגובה לא נשלחה — " + cloudErr(err)); }
+    input.disabled = false;
+    input.focus();
+  });
+
+  setTimeout(() => input.focus(), 120);
+}
+
+/* ---- מצב מקומי (בלי Firebase) — נשמר רק במכשיר הזה ---- */
+function localComments(card) {
   const key = card.item.path;
   const render = () => {
     const list = store.get("cmts", {})[key] || [];
-    return list.length
-      ? list.map(c =>
-          '<div class="cmt"><div class="av">' + esc(c.n.charAt(0).toUpperCase()) + '</div>' +
-          '<div class="txt"><div class="nm">' + esc(c.n) + '</div><div class="bd">' + esc(c.t) + "</div></div></div>"
-        ).join("")
-      : '<div class="empty-note">אין עדיין תגובות.<br>תהיה הראשון לכתוב.</div>';
+    return '<div class="who">נשמר במכשיר הזה בלבד · <button id="rename">' + esc(myName()) + "</button></div>" +
+      (list.length
+        ? list.map(c => commentRow({ name: c.n, text: c.t, at: c.at }, false)).join("")
+        : '<div class="empty-note">אין עדיין תגובות.<br>תהיה הראשון לכתוב.</div>');
   };
-  const s = sheet(
-    "תגובות",
-    render(),
-    '<form class="cmtForm"><input placeholder="הוסף תגובה…" maxlength="300" aria-label="תגובה">' +
-    '<button type="submit" aria-label="שלח"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 20l18-8L3 4l4 8-4 8z"/></svg></button></form>'
-  );
+  const s = sheet("תגובות", render(), COMMENT_FORM);
+  const redraw = () => {
+    $(".body", s).innerHTML = render();
+    const rn = $("#rename", s);
+    if (rn) rn.addEventListener("click", () => { if (askName()) redraw(); });
+  };
+  redraw();
+
   const input = $(".cmtForm input", s);
   $(".cmtForm", s).addEventListener("submit", e => {
     e.preventDefault();
     const t = input.value.trim();
     if (!t) return;
     const all = store.get("cmts", {});
-    (all[key] = all[key] || []).unshift({ n: "אני", t, at: Date.now() });
+    (all[key] = all[key] || []).unshift({ n: myName(), t, at: Date.now() });
     store.set("cmts", all);
     input.value = "";
-    $(".body", s).innerHTML = render();
-    $(".nCmt", card.el).textContent = fmt(all[key].length);
+    redraw();
+    paintCounts(card);
   });
   setTimeout(() => input.focus(), 120);
 }
@@ -921,12 +1291,23 @@ $("#btnSearch").addEventListener("click", () => {
 
 $("#btnInbox").addEventListener("click", () => toast("תיבת ההודעות תתווסף בהמשך"));
 $("#btnMe").addEventListener("click", () => {
-  const favs = Object.keys(store.get("favs", {}));
-  const likes = Object.keys(store.get("likes", {}));
-  sheet("אני",
-    "<p>הפרופיל עוד לא מחובר לשרת, אז הלייקים והשמורים נשמרים במכשיר הזה בלבד.</p>" +
-    "<p><b>" + likes.length + "</b> לייקים · <b>" + favs.length + "</b> שמורים · <b>" + items.length + "</b> סרטונים בענן</p>" +
+  const favs  = Object.keys(store.get("favs", {})).length;
+  const mine  = CL.on ? [...liked.values()].filter(Boolean).length
+                      : Object.keys(store.get("likes", {})).length;
+  const status = CL.on
+    ? '<span class="dot-live"></span>מחובר ל-Firebase — הלייקים והתגובות משותפים לכולם ובזמן אמת.'
+    : '<span class="dot-live dot-off"></span>' + (CL.error
+        ? "הענן לא זמין (" + esc(CL.error) + ") — נשמר במכשיר בלבד."
+        : "מצב מקומי — לייקים ותגובות נשמרים במכשיר הזה בלבד. למצב משותף מלא את CONFIG.firebase.");
+
+  const s = sheet("אני",
+    "<p>" + status + "</p>" +
+    "<p>השם שלך בתגובות: <b>" + esc(myName()) + '</b> · <button id="rename2" style="color:var(--accent-2);font-weight:700">שנה</button></p>' +
+    "<p><b>" + mine + "</b> לייקים · <b>" + favs + "</b> שמורים · <b>" + items.length + "</b> סרטונים בענן</p>" +
+    (CL.on ? "<p>המזהה האנונימי שלך: <code>" + esc((CL.uid || "").slice(0, 10)) + "…</code></p>" : "") +
     '<a class="btn ghost" href="' + repoUrl + '" target="_blank" rel="noopener">לנהל את הסרטונים בגיטהאב</a>');
+
+  $("#rename2", s).addEventListener("click", () => { if (askName()) closeSheet(); });
 });
 
 $$(".tabs button").forEach(b => b.addEventListener("click", e => {
@@ -997,7 +1378,18 @@ async function start() {
 
   if (!items.length) { showEmpty(); return; }
 
+  // Firestore אם מוגדר, אחרת מצב מקומי. אם הענן תקוע — ממשיכים בלעדיו אחרי 6 שניות
+  CL = await Promise.race([
+    window.cloudReady,
+    new Promise(r => setTimeout(() => r(window.CLOUD), 6000))
+  ]);
   cards = items.map(buildCard);
+
+  if (CL.on) {
+    CL.watchStats(m => { Object.assign(stats, m); cards.forEach(paintCounts); });
+  } else if (CL.error) {
+    setTimeout(() => toast("הענן לא זמין — " + cloudErr({ code: CL.error })), 1400);
+  }
 
   // מעקב אחרי הסרטון שבמסך
   const io = new IntersectionObserver(entries => {
