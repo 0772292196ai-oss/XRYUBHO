@@ -519,6 +519,8 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
     text-shadow:0 1px 3px rgba(0,0,0,.8);
   }
   .meta .author{cursor:pointer}
+  .btn.follow{margin-top:16px;max-width:220px;margin-inline:auto}
+  .btn.follow.on{background:rgba(255,255,255,.12)}
   .upcap{
     width:100%;background:rgba(255,255,255,.1);border:0;border-radius:10px;
     padding:12px 14px;color:#fff;font-size:14.5px;outline:none;margin:8px 0 10px;
@@ -766,6 +768,20 @@ const done = window.__cloudDone;
       at:      fs.serverTimestamp()
     });
 
+    /* ---- עוקבים ---- */
+    api.watchFollows = cb => fs.onSnapshot(
+      fs.collection(db, "follows"),
+      snap => cb(snap.docs.map(d => d.data())),
+      err => console.warn("[cloud] follows:", err.message)
+    );
+
+    api.setFollow = async (targetUid, on) => {
+      const id = api.uid + "_" + targetUid;
+      const ref = fs.doc(db, "follows", id);
+      if (on) await fs.setDoc(ref, { follower: api.uid, following: targetUid, at: fs.serverTimestamp() });
+      else    await fs.deleteDoc(ref);
+    };
+
     /** תגובות בזמן אמת */
     api.watchComments = (k, cb) => fs.onSnapshot(
       fs.query(cmts(k), fs.orderBy("at", "desc"), fs.limit(200)),
@@ -831,6 +847,9 @@ let   CL    = { on: false };   // ה-API מהסקריפט שלמעלה (או מ�
 const stats = {};              // { vidKey: {likes, comments} } — מתעדכן בזמן אמת
 const liked = new Map();       // { vidKey: true/false } — הלייקים שלי
 const clips = {};              // { clipKey: {uid, name, photo, caption} } — מי העלה מה
+let   iFollow   = new Set();   // ה-uid-ים שאני עוקב אחריהם
+let   followers = {};          // { uid: כמה עוקבים יש לו }
+let   tab = "foryou";          // "foryou" או "following"
 
 /** מזהה יציב לסרטון, חוקי כ-document id ב-Firestore */
 function vidKey(path) {
@@ -1710,6 +1729,9 @@ function openProfile(uid, fallbackName, fallbackPhoto) {
         ? "עוד לא העלית סרטונים.<br>לחץ על + כדי להעלות את הראשון."
         : "אין עדיין סרטונים מהמשתמש הזה.") + "</div>";
 
+  const following = iFollow.has(uid);
+  const canFollow = CL.on && !me && uid;
+
   const s = sheet("פרופיל",
     '<div class="prof">' +
       '<div class="ppic">' + (photo
@@ -1717,10 +1739,37 @@ function openProfile(uid, fallbackName, fallbackPhoto) {
         : esc(name.charAt(0).toUpperCase())) + "</div>" +
       '<div class="pname2">@' + esc(name.replace(/^@/, "")) + "</div>" +
       '<div class="pstats">' +
+        "<div><b>" + fmt(followers[uid] || 0) + "</b><span>עוקבים</span></div>" +
         "<div><b>" + mine.length + "</b><span>סרטונים</span></div>" +
         "<div><b>" + fmt(likes) + "</b><span>לייקים</span></div>" +
       "</div>" +
+      (canFollow
+        ? '<button class="btn follow' + (following ? " on" : "") + '" id="fbtn">' +
+          (following ? "עוקב ✓" : "עקוב") + "</button>"
+        : "") +
     "</div>" + grid);
+
+  const fb = $("#fbtn", s);
+  if (fb) fb.addEventListener("click", async () => {
+    if (!signedIn()) { needLogin("לעקוב"); return; }
+    const on = !iFollow.has(uid);
+    fb.disabled = true;
+    // עדכון מיידי, הענן משלים אחריו
+    if (on) iFollow.add(uid); else iFollow.delete(uid);
+    followers[uid] = Math.max(0, (followers[uid] || 0) + (on ? 1 : -1));
+    fb.textContent = on ? "עוקב ✓" : "עקוב";
+    fb.classList.toggle("on", on);
+    $(".pstats b", s).textContent = fmt(followers[uid] || 0);
+    try { await CL.setFollow(uid, on); }
+    catch (e) {
+      if (on) iFollow.delete(uid); else iFollow.add(uid);
+      followers[uid] = Math.max(0, (followers[uid] || 0) + (on ? -1 : 1));
+      fb.textContent = iFollow.has(uid) ? "עוקב ✓" : "עקוב";
+      fb.classList.toggle("on", iFollow.has(uid));
+      toast("לא נשמר — " + cloudErr(e));
+    }
+    fb.disabled = false;
+  });
 
   $$("[data-go]", s).forEach(b => b.addEventListener("click", () => {
     closeSheet();
@@ -2004,8 +2053,52 @@ $("#btnMe").addEventListener("click", () => {
 $$(".tabs button").forEach(b => b.addEventListener("click", e => {
   $$(".tabs button").forEach(x => x.classList.remove("on"));
   e.currentTarget.classList.add("on");
-  if (e.currentTarget.dataset.tab === "following") toast("עוקבים — בקרוב");
+  tab = e.currentTarget.dataset.tab;
+  applyTab();
 }));
+
+/** מסנן את הפיד לפי הלשונית הנבחרת */
+function applyTab() {
+  if (!cards.length) return;
+  let shown = 0;
+
+  cards.forEach(c => {
+    const uid = (clips[c.clip] || {}).uid;
+    const ok = tab !== "following" || (uid && iFollow.has(uid));
+    c.el.style.display = ok ? "" : "none";
+    if (ok) shown++;
+  });
+
+  let note = $("#tabNote");
+  if (tab === "following" && !shown) {
+    if (!note) {
+      note = document.createElement("div");
+      note.id = "tabNote";
+      note.className = "full";
+      note.style.zIndex = "8";
+      document.body.appendChild(note);
+    }
+    note.innerHTML =
+      '<div class="logo"><svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20c.9-3.6 3.8-5.4 7.2-5.4s6.3 1.8 7.2 5.4" fill="none" stroke="#fff" stroke-width="2"/></svg></div>' +
+      "<h1>עוד לא עוקב אחרי אף אחד</h1>" +
+      "<h2>" + (signedIn()
+        ? "לחץ על התמונה של מישהו בפיד ואז על ״עקוב״"
+        : "התחבר עם Google כדי לעקוב אחרי אנשים") + "</h2>" +
+      '<div class="acts"><button class="btn" id="backForYou">חזרה ל״בשבילך״</button></div>';
+    $("#backForYou", note).addEventListener("click", () => {
+      $$(".tabs button").forEach(x => x.classList.toggle("on", x.dataset.tab === "foryou"));
+      tab = "foryou";
+      applyTab();
+    });
+    note.classList.remove("hidden");
+  } else if (note) {
+    note.remove();
+  }
+
+  // אחרי סינון הכרטיסים הגלילה מתאפסת, אז מנגנים את הראשון שנשאר
+  const first = cards.find(c => c.el.style.display !== "none");
+  if (first) { feed.scrollTop = 0; active = -1; setActive(first.i); }
+}
 
 /* ============================================================
    7. מקלדת (למחשב)
@@ -2082,12 +2175,25 @@ async function start() {
       return;
     }
     CL.watchStats(m => { Object.assign(stats, m); cards.forEach(paintCounts); });
-    CL.watchClips(m => { Object.assign(clips, m); cards.forEach(paintOwner); });
+    CL.watchClips(m => { Object.assign(clips, m); cards.forEach(paintOwner); applyTab(); });
+    CL.watchFollows(list => {
+      followers = {};
+      const mineSet = new Set();
+      const myUid = CL.user && CL.user.uid;
+      list.forEach(f => {
+        followers[f.following] = (followers[f.following] || 0) + 1;
+        if (myUid && f.follower === myUid) mineSet.add(f.following);
+      });
+      iFollow = mineSet;
+      applyTab();
+    });
     // התחברות או התנתקות — הלייקים האישיים שייכים למשתמש, אז מאפסים ובודקים מחדש
-    CL.onUser(() => {
+    CL.onUser(u => {
       liked.clear();
+      if (!u) iFollow = new Set();
       cards.forEach(paintCounts);
       refreshLiked(cards[active]);
+      applyTab();
     });
   };
 
