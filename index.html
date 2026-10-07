@@ -134,6 +134,9 @@ window.CONFIG = {
   // מי רואה את תור האישורים ויכול לאשר או לדחות
   adminEmail: "0772292196ai@gmail.com",
 
+  // false = כל העלאה עוברת אישור, גם של המנהל. true = המנהל מפרסם ישר לפיד.
+  adminSkipsQueue: false,
+
   /* ---- Cloudinary: העלאה ישירה מהדפדפן, בלי התחברות ----
      כשזה מלא, כפתור + מעלה ישירות לענן של Cloudinary בלי GitHub בכלל.
      שני הערכים האלה ציבוריים במכוון — הם לא סודות.
@@ -496,6 +499,13 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
   .me-row .sub{font-size:12.5px;color:var(--dimmer);margin-top:2px}
   .upinfo{font-size:13px;color:var(--dim);text-align:center;margin:8px 0 2px;min-height:18px;line-height:1.5}
   .upinfo.bad{color:#ff6b6b;font-weight:600}
+  .hint{font-size:12px;color:var(--dimmer);line-height:1.5;margin:-4px 2px 10px}
+  .taste{
+    font-size:13px;line-height:1.7;color:var(--dim);padding:10px 12px;margin:2px 0 12px;
+    border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.04);
+  }
+  .taste b{color:#fff}
+  .taste button{color:var(--accent-2);font-weight:700;font-size:12.5px;margin-inline-start:6px}
   .pend{
     border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:12px;
     background:rgba(255,255,255,.04);
@@ -878,6 +888,7 @@ const clips = {};              // { clipKey: {uid, name, photo, caption} } — �
 let   iFollow   = new Set();   // ה-uid-ים שאני עוקב אחריהם
 let   followers = {};          // { uid: כמה עוקבים יש לו }
 let   tab = "foryou";          // "foryou" או "following"
+let   appliedTab = "foryou";   // הלשונית שכבר הוחלה, כדי לדעת מתי היא באמת התחלפה
 
 /** מזהה יציב לסרטון, חוקי כ-document id ב-Firestore */
 function vidKey(path) {
@@ -1044,6 +1055,8 @@ async function fromCloud() {
     .map(d => ({
       path:   d.src,                                   // כתובת מלאה — srcsFor מחזיר אותה כמו שהיא
       clipId: d.id,
+      uid:    d.uid || "",
+      atMs:   d.atMs || 0,
       title:  d.caption || "",
       author: d.name || C.defaultAuthor,
       sound:  "הצליל המקורי",
@@ -1082,18 +1095,29 @@ function buildCard(item, i) {
 
   $(".marq", el).textContent = item.sound || "הצליל המקורי";
 
-  const card = { el, video, item, srcs, srcIdx: 0, i, clip: item.clipId || clipKey(item.path) };
+  const card = {
+    el, video, item, srcs, srcIdx: 0, i, clip: item.clipId || clipKey(item.path),
+    rnd: Math.random(),            // גורם אקראי יציב לסרטון הזה, כדי שהסדר לא "ירקוד" בין חישובים
+    _watched: 0, _lastT: 0, _played: false
+  };
   paintOwner(card);
 
   /* --- נגן: מצבים --- */
   video.addEventListener("waiting",      () => el.classList.add("loading"));
   video.addEventListener("canplay",      () => el.classList.remove("loading"));
   video.addEventListener("loadeddata",   () => el.classList.remove("loading"));
-  video.addEventListener("playing",      () => { el.classList.remove("loading", "paused"); el.classList.add("playing"); });
+  video.addEventListener("playing",      () => {
+    el.classList.remove("loading", "paused"); el.classList.add("playing");
+    if (card.i === active) card._played = true;          // התחיל להתנגן באמת, אפשר ללמוד ממנו
+  });
   video.addEventListener("pause",        () => { el.classList.remove("playing"); if (!video.ended) el.classList.add("paused"); });
   video.addEventListener("timeupdate",   () => {
     if (!video.duration) return;
     $(".bar b", el).style.width = (video.currentTime / video.duration * 100) + "%";
+    // זמן צפייה אמיתי: רק התקדמות רציפה בזמן שהסרטון הנוכחי מתנגן (לא דילוג בפס, לא לולאה)
+    const t = video.currentTime, dt = t - card._lastT;
+    if (card.i === active && !video.paused && dt > 0 && dt < 1.5) card._watched += dt;
+    card._lastT = t;
   });
   video.addEventListener("error", () => nextSource(card));
 
@@ -1117,6 +1141,7 @@ function buildCard(item, i) {
   $(".cmt",  el).addEventListener("click", () => openComments(card));
   $(".fav",  el).addEventListener("click", e => {
     const on = toggleFlag("fav", item.path);
+    learn(card, on ? 2 : -2);
     e.currentTarget.classList.toggle("on", on);
     $(".nFav", el).textContent = on ? "שמור ✓" : "שמור";
     toast(on ? "נשמר במועדפים" : "הוסר מהמועדפים");
@@ -1191,10 +1216,179 @@ function detach(card) {
 }
 
 /* ============================================================
+   3ב. "בשבילך" — הפיד לומד מה אתה צופה
+   ------------------------------------------------------------
+   הכל קורה במכשיר הזה בלבד (localStorage). שום פרופיל לא נשלח לשרת.
+   כל סרטון מתואר במאפיינים: היוצר, תגיות (#), ומילים מהשם שלו.
+   אחרי כל צפייה מעדכנים את ההעדפה לכל המאפיינים שלו:
+     דילוג מהיר ........ מינוס      צפייה חלקית ..... כמעט כלום
+     צפייה עד הסוף .... פלוס        צפייה חוזרת ..... פלוס גדול
+     לייק / תגובה / שמירה / שיתוף / מעקב — פלוס מפורש
+   ההעדפה דועכת עם הזמן (חצי חיים: 3 שבועות), ולכן הפיד לא "נתקע".
+   ============================================================ */
+const TASTE_HALF = 21 * 864e5;
+let   taste = store.get("taste", {});          // { "o:uid" | "t:#tag" | "w:מילה": {v, t} }
+let   seenLog = store.get("seen", {});         // { clipKey: {n, last} }
+
+const decayed = (e, now) => e ? e.v * Math.pow(0.5, (now - e.t) / TASTE_HALF) : 0;
+const affinity = (k, now) => Math.tanh(decayed(taste[k], now) / 4) * 3;     // חסום בין -3 ל-3
+
+/** המאפיינים של סרטון: יוצר + תגיות + מילים משם הסרטון */
+function featuresOf(clipId, item) {
+  const c = clips[clipId] || {};
+  const uid = item.uid || c.uid;
+  const owner = uid ? "o:" + uid
+    : (item.author && item.author !== C.defaultAuthor ? "o:" + item.author : "");
+  const text = String(c.caption || item.title || "");
+  const tags = [...new Set((text.match(/#[\p{L}\p{N}_]+/gu) || []).map(s => "t:" + s.toLowerCase()))].slice(0, 8);
+  const words = [...new Set(
+    (text.replace(/#[\p{L}\p{N}_]+/gu, " ").toLowerCase().match(/[\p{L}]{4,}/gu) || [])
+      .map(s => "w:" + s))].slice(0, 6);
+  return { owner, tags, words };
+}
+
+function bumpFeature(k, add) {
+  if (!k || !add) return;
+  const now = Date.now();
+  taste[k] = { v: decayed(taste[k], now) + add, t: now };
+}
+function saveTaste() {
+  const now = Date.now();
+  const keep = Object.entries(taste)                      // לא נותנים לאחסון לגדול בלי גבול
+    .map(([k, e]) => [k, e, Math.abs(decayed(e, now))])
+    .filter(([, , m]) => m > 0.05)
+    .sort((a, b) => b[2] - a[2]).slice(0, 160);
+  taste = Object.fromEntries(keep.map(([k, e]) => [k, e]));
+  store.set("taste", taste);
+}
+
+/** מעדכן את ההעדפה לפי סרטון: משקל מלא ליוצר, פחות לתגיות, עוד פחות למילים */
+function learn(card, w) {
+  if (!card || !w) return;
+  const f = featuresOf(card.clip, card.item);
+  bumpFeature(f.owner, w);
+  f.tags.forEach(k => bumpFeature(k, w * 0.6));
+  f.words.forEach(k => bumpFeature(k, w * 0.3));
+  saveTaste();
+}
+
+function noteSeen(card) {
+  const e = seenLog[card.clip] || { n: 0, last: 0 };
+  seenLog[card.clip] = { n: e.n + 1, last: Date.now() };
+  const keys = Object.keys(seenLog);
+  if (keys.length > 300) {                                // שומרים רק את האחרונים
+    keys.sort((a, b) => seenLog[a].last - seenLog[b].last)
+        .slice(0, keys.length - 300).forEach(k => delete seenLog[k]);
+  }
+  store.set("seen", seenLog);
+}
+
+/** כמה הסרטון הזה מתאים לך עכשיו. גבוה יותר = יופיע קודם */
+function scoreEntity(clipId, item, rnd, now) {
+  const f = featuresOf(clipId, item);
+  let s = 0;
+
+  if (f.owner) s += affinity(f.owner, now);
+  const rest = f.tags.map(k => affinity(k, now) * 0.6).concat(f.words.map(k => affinity(k, now) * 0.3));
+  if (rest.length) s += rest.reduce((a, b) => a + b, 0) / Math.sqrt(rest.length);
+
+  const uid = item.uid || (clips[clipId] || {}).uid;
+  if (uid && iFollow.has(uid)) s += 1.2;                  // אחרי מי שאתה עוקב
+
+  const at = item.atMs || 0;                              // סרטון חדש מקבל דחיפה קטנה
+  if (at) s += 1.5 * Math.exp(-((now - at) / 864e5) / 5);
+
+  const seen = seenLog[clipId];
+  if (!seen) s += 0.8;                                    // לא ראית אותו עדיין
+  else {                                                  // כבר ראית: לא מחזירים אותו מיד
+    const hours = (now - seen.last) / 36e5;
+    s -= Math.min(seen.n, 4) * 1.4 * Math.max(0.3, Math.exp(-hours / 6));
+  }
+
+  return s + (rnd - 0.5) * 0.9;                           // קצת אקראיות כדי לגלות דברים חדשים
+}
+
+const clipIdOf = item => item.clipId || clipKey(item.path);
+
+/** סידור ראשוני של הפיד לפני שהוא נבנה */
+function rankItems(list, firstClip) {
+  const now = Date.now();
+  const scored = list.map(it => ({ it, s: scoreEntity(clipIdOf(it), it, Math.random(), now) }));
+  scored.sort((a, b) => b.s - a.s);
+  const out = scored.map(x => x.it);
+  if (firstClip) {                                        // קישור ישיר: הסרטון המבוקש פותח את הפיד
+    const k = out.findIndex(it => clipIdOf(it) === firstClip);
+    if (k > 0) out.unshift(out.splice(k, 1)[0]);
+  }
+  return out;
+}
+
+/** אחרי כל סרטון שנצפה: מסדרים מחדש רק את מה שעוד לא הגיע */
+function rerankUpcoming() {
+  if (tab !== "foryou" || active < 0) return;
+  const head = cards.slice(0, active + 1);
+  const tail = cards.slice(active + 1);
+  if (tail.length < 2) return;
+
+  const now = Date.now();
+  const ranked = tail
+    .map(c => ({ c, s: scoreEntity(c.clip, c.item, c.rnd, now) }))
+    .sort((a, b) => b.s - a.s).map(x => x.c);
+  if (ranked.every((c, k) => c === tail[k])) return;      // שום דבר לא השתנה
+
+  cards = head.concat(ranked);
+  const frag = document.createDocumentFragment();
+  ranked.forEach(c => frag.appendChild(c.el));
+  feed.appendChild(frag);                                 // מזיז רק את הכרטיסים שאחרי הנוכחי
+  cards.forEach((c, k) => { c.i = k; });
+  cards.forEach((c, j) => {                               // השכן הבא אולי התחלף
+    if (Math.abs(j - active) <= 1) attach(c); else detach(c);
+  });
+}
+
+/** סוגר צפייה בסרטון: מחשב כמה צפית ומה זה אומר על ההעדפות */
+function finishWatch(card) {
+  if (!card) return;
+  const w = card._watched || 0, played = card._played;
+  card._watched = 0; card._played = false;
+  const d = card.video.duration;
+  if (!played || !d || !isFinite(d)) return;              // הסרטון לא הספיק להיטען: אין מסקנה
+  const ratio = w / d;
+  let sig;
+  if (w < 1.2 || ratio < 0.15) sig = -1;                  // דילוג
+  else if (ratio < 0.6) sig = 0.2;
+  else if (ratio < 1) sig = 1;                            // כמעט עד הסוף
+  else if (ratio < 2) sig = 2;                            // עד הסוף
+  else sig = 3;                                           // צפייה חוזרת
+  learn(card, sig);
+  noteSeen(card);
+}
+
+/** סיכום קצר של מה שהפיד למד, להצגה במסך "אני" */
+function tasteSummary() {
+  const now = Date.now();
+  const rows = Object.entries(taste).map(([k, e]) => [k, decayed(e, now)]).filter(([, v]) => v > 0.6)
+    .sort((a, b) => b[1] - a[1]);
+  const nameOf = id => {
+    const hit = Object.values(clips).find(c => c.uid === id);
+    return hit ? hit.name : id;
+  };
+  return {
+    tags: rows.filter(([k]) => k.startsWith("t:")).slice(0, 4).map(([k]) => k.slice(2)),
+    owners: rows.filter(([k]) => k.startsWith("o:")).slice(0, 2).map(([k]) => nameOf(k.slice(2))),
+    total: rows.length
+  };
+}
+
+/* ============================================================
    4. ניגון — רק הסרטון שעל המסך מתנגן
    ============================================================ */
 function setActive(i) {
   if (i === active || !cards[i]) return;
+
+  const prev = cards[active];
+  if (prev) finishWatch(prev);                            // לומדים מהסרטון שעזבנו
+
   active = i;
   cards.forEach((c, j) => {
     const near = Math.abs(j - i) <= 1;
@@ -1202,6 +1396,7 @@ function setActive(i) {
     if (j !== i) { c.video.pause(); c.video.currentTime = 0; }
   });
   const c = cards[i];
+  c._watched = 0; c._lastT = 0; c._played = false;
   refreshLiked(c);
   c.video.muted = muted;
   c.video.play().catch(() => {
@@ -1209,8 +1404,14 @@ function setActive(i) {
     c.video.muted = true; muted = true; paintSound();
     c.video.play().catch(() => {});
   });
-  history.replaceState(null, "", "#v" + (i + 1));
+
+  // לא כותבים מיקום ל-URL: רענון מביא פיד מסודר מחדש, וקישורי שיתוף מבוססי מזהה
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+
+  if (prev) rerankUpcoming();                             // ההעדפות התעדכנו: מסדרים את הבא בתור
 }
+
+window.addEventListener("pagehide", () => { finishWatch(cards[active]); });
 
 function togglePlay(card) {
   if (card.video.paused) card.video.play().catch(() => {});
@@ -1265,7 +1466,8 @@ function toggleFlag(bucket, key, force) {
 function paintOwner(card) {
   const el = card.el, c = clips[card.clip] || {};
   const name = c.name || card.item.author || C.defaultAuthor;
-  const cap  = c.caption || card.item.title || "";
+  // לכל סרטון יש שם קבוע. סרטון ענן ישן בלי שם מקבל תווית ברורה במקום שורה ריקה
+  const cap  = c.caption || card.item.title || (card.item.clipId ? "סרטון ללא שם" : "");
 
   $(".author", el).textContent  = name.charAt(0) === "@" ? name : "@" + name;
   $(".caption", el).textContent = cap;
@@ -1341,9 +1543,11 @@ async function setLike(card, force) {
   if (CL.on && !CL.user) { needLogin("לעשות לייק"); return; }
 
   if (!CL.on) {                                   // מצב מקומי
+    const was = !!store.get("likes", {})[card.item.path];
     const on = toggleFlag("likes", card.item.path, force);
     paintCounts(card);
     if (on) bumpHeart(card);
+    if (on !== was) { learn(card, on ? 3 : -3); rerankUpcoming(); }
     return;
   }
 
@@ -1358,6 +1562,8 @@ async function setLike(card, force) {
   s.likes = Math.max(0, (s.likes || 0) + (on ? 1 : -1));
   paintCounts(card);
   if (on) bumpHeart(card);
+  learn(card, on ? 3 : -3);                       // לייק = העדפה מפורשת
+  rerankUpcoming();
 
   try {
     await CL.setLike(k, on);
@@ -1382,7 +1588,9 @@ function spawnHeart(el, x, y) {
 }
 
 function share(card) {
-  const url = location.origin + location.pathname + "#v" + (card.i + 1);
+  learn(card, 1.5);                                     // שיתוף = העדפה מפורשת
+  // קישור לפי מזהה הסרטון, לא לפי מיקום: הסדר בפיד שונה לכל צופה
+  const url = location.origin + location.pathname + "#c=" + encodeURIComponent(card.clip);
   const data = { title: C.appName || "סרטון", text: card.item.title || "", url };
   if (navigator.share) { navigator.share(data).catch(() => {}); return; }
   navigator.clipboard?.writeText(url).then(() => toast("הקישור הועתק")).catch(() => toast(url));
@@ -1490,7 +1698,7 @@ function cloudComments(card) {
     if (!signedIn()) { needLogin("להגיב"); return; }
     input.value = "";
     input.disabled = true;
-    try { await CL.addComment(k, CL.user.name, t); }
+    try { await CL.addComment(k, CL.user.name, t); learn(card, 2); }
     catch (err) { input.value = t; toast("התגובה לא נשלחה — " + cloudErr(err)); }
     input.disabled = false;
     input.focus();
@@ -1643,7 +1851,7 @@ function slugify(s) {
 /** מעלה קובץ אחד כקומיט. המנהל מפרסם ישר לפיד, כל השאר נכנסים לתור. */
 async function ghCommitFile(file, caption, onStep) {
   const o = CONFIG.owner, r = CONFIG.repo, br = CONFIG.branch;
-  const target = isAdmin() ? CONFIG.videosDir : (CONFIG.pendingDir || CONFIG.videosDir);
+  const target = skipsQueue() ? CONFIG.videosDir : (CONFIG.pendingDir || CONFIG.videosDir);
   const dir = (target || "").replace(/^\/+|\/+$/g, "");
   const ext = (file.name.match(/\.[a-z0-9]+$/i) || [".mp4"])[0].toLowerCase();
   const base = slugify(caption) || slugify(file.name.replace(/\.[^.]+$/, "")) || "clip";
@@ -1735,6 +1943,11 @@ function cloudinaryError(e) {
 }
 
 /* ---- תור האישורים של המנהל ---- */
+/** האם ההעלאה הנוכחית מפורסמת ישר. רק אם הוגדר במפורש, ורק למנהל. */
+function skipsQueue() {
+  return C.adminSkipsQueue === true && isAdmin();
+}
+
 function isAdmin() {
   return !!(CL.user && C.adminEmail &&
             CL.user.email.toLowerCase() === C.adminEmail.toLowerCase());
@@ -1854,6 +2067,7 @@ function openProfile(uid, fallbackName, fallbackPhoto) {
     fb.textContent = on ? "עוקב ✓" : "עקוב";
     fb.classList.toggle("on", on);
     $(".pstats b", s).textContent = fmt(followers[uid] || 0);
+    bumpFeature("o:" + uid, on ? 3 : -3); saveTaste();       // מעקב = העדפה חזקה ליוצר
     try { await CL.setFollow(uid, on); }
     catch (e) {
       if (on) iFollow.delete(uid); else iFollow.add(uid);
@@ -2014,48 +2228,63 @@ async function openUpload() {
 
   const draw = () => {
     const body = $("#upBody", s);
-    const direct = isAdmin();     // המנהל מפרסם ישר, בלי תור
+    const direct = skipsQueue();  // ברירת מחדל: false. כולם עוברים אישור, גם המנהל
 
     body.innerHTML =
       '<input type="file" id="vfile" accept="video/*" style="display:none">' +
       '<button class="btn ghost" id="pick">בחר סרטון מהמכשיר</button>' +
       '<div id="picked" class="upinfo"></div>' +
-      '<input id="vcap" class="upcap" maxlength="80" placeholder="כיתוב (אופציונלי)">' +
+      '<input id="vcap" class="upcap" maxlength="80" aria-label="שם הסרטון" ' +
+        'placeholder="שם הסרטון (חובה) — אפשר להוסיף #תגיות">' +
+      '<div class="hint">השם קבוע: אחרי ההעלאה רק המנהל יכול לשנות אותו. תגיות עוזרות לפיד להתאים סרטונים לצופים.</div>' +
       '<button class="btn" id="go" disabled>' + (direct ? "פרסם" : "שלח לאישור") + "</button>" +
       '<div id="ups" class="upstat"></div>' +
       '<p style="margin-top:12px">' +
       (direct ? "הסרטון יעלה ישר לפיד." : "הסרטון נשלח לבדיקת המנהל ומופיע רק אחרי שאושר.") +
       " עד 100MB, מומלץ MP4 אנכי עד ~30 שניות." +
-      (CL.ghToken ? "" : "<br>בלחיצה תתבקש פעם אחת לאשר גישה ל-GitHub — שם הסרטונים נשמרים.") +
+      (cloudinaryOn() || CL.ghToken ? "" : "<br>בלחיצה תתבקש פעם אחת לאשר גישה ל-GitHub — שם הסרטונים נשמרים.") +
       "</p>";
 
     const fileInput = $("#vfile", s), go = $("#go", s), info = $("#picked", s), st = $("#ups", s);
+    const nameBox = $("#vcap", s);
+    const nameOk = () => nameBox.value.trim().length >= 2;
+    let fileOk = false;
+    const refreshGo = () => { go.disabled = !(fileOk && nameOk()); };
+
     $("#pick", s).addEventListener("click", () => fileInput.click());
+    nameBox.addEventListener("input", refreshGo);
 
     fileInput.addEventListener("change", async () => {
       const f = fileInput.files && fileInput.files[0];
       info.classList.remove("bad");
-      if (!f) { info.textContent = ""; go.disabled = true; return; }
+      fileOk = false;
+      if (!f) { info.textContent = ""; refreshGo(); return; }
 
       info.textContent = "בודק את הקובץ…";
-      go.disabled = true;
+      refreshGo();
       const bad = await rejectReason(f);
       if (bad) {
         info.classList.add("bad");
         info.textContent = "✕ " + bad;
         fileInput.value = "";          // לא משאירים קובץ פסול תקוע בטופס
+        refreshGo();
         return;
       }
       info.textContent = "✓ " + f.name + " · " + (f.size / 1048576).toFixed(1) + "MB";
-      go.disabled = false;
+      fileOk = true;
+      refreshGo();
+      if (!nameOk()) nameBox.focus();  // השלב הבא: לתת שם
     });
 
     go.addEventListener("click", async () => {
       const f = fileInput.files && fileInput.files[0];
       if (!f) return;
 
+      if (!nameOk()) { toast("תן שם לסרטון (לפחות 2 תווים)"); nameBox.focus(); return; }
+      if (CL.on && !signedIn()) { needLogin("להעלות סרטון"); return; }   // לפני ההעלאה, לא אחריה
+
       const bad = await rejectReason(f);      // בדיקה שנייה, ממש לפני הכתיבה לרפו
-      if (bad) { toast("נחסם — " + bad); fileInput.value = ""; info.textContent = ""; go.disabled = true; return; }
+      if (bad) { toast("נחסם — " + bad); fileInput.value = ""; info.textContent = ""; fileOk = false; refreshGo(); return; }
 
       go.disabled = true; go.style.opacity = ".6";
       $("#pick", s).disabled = true;
@@ -2067,7 +2296,7 @@ async function openUpload() {
         $("#pick", s).disabled = false;
       };
 
-      const cap = $("#vcap", s).value;
+      const cap = nameBox.value.trim();
 
       /* --- המסלול המהיר: העלאה ישירה ל-Cloudinary, בלי GitHub --- */
       if (cloudinaryOn()) {
@@ -2083,7 +2312,9 @@ async function openUpload() {
             toast("הסרטון פורסם");
             setTimeout(() => location.reload(), 1800);
           } else {
-            st.textContent = "נשלח ✓ ממתין לאישור המנהל";
+            st.textContent = isAdmin()
+              ? "נשלח ✓ לאישור: אני ← ממתינים לאישור"
+              : "נשלח ✓ ממתין לאישור המנהל";
             toast("הסרטון נשלח לאישור");
             fileInput.value = ""; info.textContent = "";
             $("#pick", s).disabled = false;
@@ -2118,7 +2349,9 @@ async function openUpload() {
           toast("הסרטון פורסם");
           setTimeout(() => location.reload(), 2500);
         } else {
-          st.textContent = "נשלח ✓ ממתין לאישור המנהל";
+          st.textContent = isAdmin()
+            ? "נשלח ✓ לאישור: אני ← ממתינים לאישור"
+            : "נשלח ✓ ממתין לאישור המנהל";
           toast("הסרטון נשלח לאישור");
           $("#pick", s).disabled = false;
           fileInput.value = "";
@@ -2142,7 +2375,7 @@ $("#btnSearch").addEventListener("click", () => {
     '<div id="res"></div>');
   const run = () => {
     const q = $("#q", s).value.trim().toLowerCase();
-    const hits = items.map((it, i) => ({ it, i }))
+    const hits = cards.map((c, i) => ({ it: c.item, i }))
       .filter(({ it }) => !q || (it.title || "").toLowerCase().includes(q) || it.path.toLowerCase().includes(q));
     $("#res", s).innerHTML = hits.length
       ? hits.map(({ it, i }) =>
@@ -2187,8 +2420,18 @@ $("#btnMe").addEventListener("click", () => {
     head = "";
   }
 
+  const ts = tasteSummary();
+  const tasteHtml = '<div class="taste">' + (ts.total
+    ? "<b>הפיד לומד ממך</b> (במכשיר הזה בלבד)<br>" +
+      (ts.tags.length ? "תחומי עניין: " + ts.tags.map(esc).join(" · ") + "<br>" : "") +
+      (ts.owners.length ? "יוצרים: " + ts.owners.map(esc).join(" · ") : "") +
+      ' <button id="tasteReset">אפס העדפות</button>'
+    : "<b>הפיד עוד לא מכיר אותך.</b> ככל שתצפה, תדלג ותעשה לייק, ״בשבילך״ יעלה קודם את מה שמתאים לך.") +
+    "</div>";
+
   const s = sheet("אני",
     head +
+    tasteHtml +
     "<p>" + status + "</p>" +
     "<p><b>" + mine + "</b> לייקים · <b>" + favs + "</b> שמורים · <b>" + items.length + "</b> סרטונים בענן</p>" +
     (signedIn() ? '<button class="btn ghost" id="myprof">הפרופיל שלי</button>' : "") +
@@ -2198,6 +2441,15 @@ $("#btnMe").addEventListener("click", () => {
 
   const mp = $("#myprof", s);
   if (mp) mp.addEventListener("click", () => openProfile(CL.user.uid));
+
+  const tr = $("#tasteReset", s);
+  if (tr) tr.addEventListener("click", () => {
+    if (!confirm("לאפס את כל מה שהפיד למד עליך? זה לא ניתן לשחזור.")) return;
+    taste = {}; seenLog = {};
+    store.set("taste", taste); store.set("seen", seenLog);
+    closeSheet();
+    toast("ההעדפות אופסו");
+  });
 
   const rev = $("#review", s);
   if (rev) {
@@ -2267,9 +2519,16 @@ function applyTab() {
     note.remove();
   }
 
-  // אחרי סינון הכרטיסים הגלילה מתאפסת, אז מנגנים את הראשון שנשאר
-  const first = cards.find(c => c.el.style.display !== "none");
-  if (first) { feed.scrollTop = 0; active = -1; setActive(first.i); }
+  // קופצים לראשון רק כשהלשונית באמת התחלפה או שהסרטון שצפית בו נעלם.
+  // עדכון רקע (מישהו עקב, סרטון חדש אושר) לא אמור לזרוק אותך לתחילת הפיד.
+  const tabChanged = tab !== appliedTab;
+  appliedTab = tab;
+  const cur = cards[active];
+  const curGone = !cur || cur.el.style.display === "none";
+  if (tabChanged || curGone) {
+    const first = cards.find(c => c.el.style.display !== "none");
+    if (first) { feed.scrollTop = 0; active = -1; setActive(first.i); }
+  }
 }
 
 /* ============================================================
@@ -2340,6 +2599,11 @@ async function start() {
 
   if (!items.length) { showEmpty(); return; }
 
+  /* סדר הפיד: מותאם אישית ("בשבילך"), חוץ מקישור ישן מהצורה #v3 שמבוסס על מיקום */
+  const legacy = location.hash.match(/^#v(\d+)$/);
+  const wantClip = (location.hash.match(/^#c=(.+)$/) || [])[1];
+  if (!legacy) items = rankItems(items, wantClip ? decodeURIComponent(wantClip) : null);
+
   cards = items.map(buildCard);
 
   const wireCloud = () => {
@@ -2348,7 +2612,7 @@ async function start() {
       return;
     }
     CL.watchStats(m => { Object.assign(stats, m); cards.forEach(paintCounts); });
-    CL.watchClips(m => { Object.assign(clips, m); cards.forEach(paintOwner); applyTab(); });
+    CL.watchClips(m => { Object.assign(clips, m); cards.forEach(paintOwner); applyTab(); rerankUpcoming(); });
     CL.watchFollows(list => {
       followers = {};
       const mineSet = new Set();
@@ -2384,11 +2648,22 @@ async function start() {
   }, { root: feed, threshold: [0, .6, 1] });
   cards.forEach(c => io.observe(c.el));
 
+  // חיבור איטי: אם הענן הגיע אחרי שהפיד כבר נבנה, סרטוני הענן לא נכנסו. מצרפים אותם עכשיו
+  if (!CL.on && !CL.error) {
+    window.cloudReady.then(async () => {
+      if (!window.CLOUD.on) return;
+      let extra = [];
+      try { extra = (await fromCloud()).filter(it => !cards.some(c => c.clip === clipIdOf(it))); } catch {}
+      extra.forEach(it => { const c = buildCard(it, cards.length); cards.push(c); io.observe(c.el); });
+      if (extra.length) { applyTab(); rerankUpcoming(); }
+    });
+  }
+
   paintSound();
   boot.classList.add("hidden");
 
-  // קישור ישיר לסרטון מסוים (#v3)
-  const m = location.hash.match(/^#v(\d+)$/);
+  // קישור ישן לפי מיקום (#v3). קישורים חדשים (#c=מזהה) כבר סודרו כך שהסרטון שלהם ראשון
+  const m = legacy;
   const startAt = m ? Math.min(items.length, Math.max(1, +m[1])) - 1 : 0;
   if (startAt > 0) feed.scrollTop = startAt * feed.clientHeight;
   setActive(startAt);
