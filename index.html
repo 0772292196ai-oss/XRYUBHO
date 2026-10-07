@@ -134,6 +134,16 @@ window.CONFIG = {
   // מי רואה את תור האישורים ויכול לאשר או לדחות
   adminEmail: "0772292196ai@gmail.com",
 
+  /* ---- Cloudinary: העלאה ישירה מהדפדפן, בלי התחברות ----
+     כשזה מלא, כפתור + מעלה ישירות לענן של Cloudinary בלי GitHub בכלל.
+     שני הערכים האלה ציבוריים במכוון — הם לא סודות.
+     איך משיגים: cloudinary.com ▸ הרשמה ▸ Settings ▸ Upload ▸ Upload presets
+     ▸ Add upload preset ▸ Signing Mode: Unsigned ▸ שומרים את השם.  */
+  cloudinary: {
+    cloudName:    "",
+    uploadPreset: ""
+  },
+
   // שם המשתמש שיוצג מתחת לסרטון כברירת מחדל
   defaultAuthor: "@user",
 
@@ -760,13 +770,31 @@ const done = window.__cloudDone;
       err => console.warn("[cloud] clips:", err.message)
     );
 
-    api.setClip = (key, data) => fs.setDoc(fs.doc(db, "clips", key), {
-      uid:     api.uid,
-      name:    (api.user && api.user.name)  || "",
-      photo:   (api.user && api.user.photo) || "",
-      caption: data.caption || "",
-      at:      fs.serverTimestamp()
-    });
+    api.setClip = (key, data) => {
+      const doc = {
+        uid:     api.uid,
+        name:    (api.user && api.user.name)  || "",
+        photo:   (api.user && api.user.photo) || "",
+        caption: data.caption || "",
+        at:      fs.serverTimestamp()
+      };
+      if (data.src) doc.src = data.src;                 // סרטון שמאוחסן ב-Cloudinary
+      if ("approved" in data) doc.approved = !!data.approved;
+      return fs.setDoc(fs.doc(db, "clips", key), doc);
+    };
+
+    /** קריאה חד-פעמית של כל רשומות הסרטונים, לבניית הפיד */
+    api.listClips = async () => {
+      const snap = await fs.getDocs(fs.collection(db, "clips"));
+      return snap.docs.map(d => {
+        const v = d.data() || {};
+        return Object.assign({ id: d.id, atMs: v.at && v.at.toMillis ? v.at.toMillis() : 0 }, v);
+      });
+    };
+
+    /** אישור של המנהל — הופך סרטון ממתין לגלוי בפיד */
+    api.approveClip = key => fs.updateDoc(fs.doc(db, "clips", key), { approved: true });
+    api.deleteClip  = key => fs.deleteDoc(fs.doc(db, "clips", key));
 
     /* ---- עוקבים ---- */
     api.watchFollows = cb => fs.onSnapshot(
@@ -1005,16 +1033,37 @@ async function fromRepoTree() {
   });
 }
 
+/** סרטונים שהועלו ל-Cloudinary ונרשמו ב-Firestore (רק מאושרים) */
+async function fromCloud() {
+  if (!CL.on || !CL.listClips) return [];
+  let docs;
+  try { docs = await CL.listClips(); } catch { return []; }
+  return docs
+    .filter(d => d.src && d.approved !== false)
+    .sort((a, b) => (b.atMs || 0) - (a.atMs || 0))     // החדש למעלה
+    .map(d => ({
+      path:   d.src,                                   // כתובת מלאה — srcsFor מחזיר אותה כמו שהיא
+      clipId: d.id,
+      title:  d.caption || "",
+      author: d.name || C.defaultAuthor,
+      sound:  "הצליל המקורי",
+      poster: "",
+      cover:  true
+    }));
+}
+
 async function discover() {
+  const cloud = await fromCloud();
+
   const json = await fromJson();
-  if (json.length) { store.set("cache", json); return json; }
+  if (json.length) { store.set("cache", json); return cloud.concat(json); }
   try {
     const tree = await fromRepoTree();
-    if (tree.length) { store.set("cache", tree); return tree; }
-    return [];
+    if (tree.length) store.set("cache", tree);
+    return cloud.concat(tree);
   } catch (e) {
     const cached = store.get("cache", []);
-    if (cached.length) return cached;                 // נפלנו על מגבלת API — מציגים את הרשימה השמורה
+    if (cached.length || cloud.length) return cloud.concat(cached);
     throw e;
   }
 }
@@ -1033,7 +1082,7 @@ function buildCard(item, i) {
 
   $(".marq", el).textContent = item.sound || "הצליל המקורי";
 
-  const card = { el, video, item, srcs, srcIdx: 0, i, clip: clipKey(item.path) };
+  const card = { el, video, item, srcs, srcIdx: 0, i, clip: item.clipId || clipKey(item.path) };
   paintOwner(card);
 
   /* --- נגן: מצבים --- */
@@ -1591,10 +1640,11 @@ function slugify(s) {
     .slice(0, 60);
 }
 
-/** מעלה קובץ אחד כקומיט לתיקיית ההמתנה. onStep מדווח התקדמות. */
+/** מעלה קובץ אחד כקומיט. המנהל מפרסם ישר לפיד, כל השאר נכנסים לתור. */
 async function ghCommitFile(file, caption, onStep) {
   const o = CONFIG.owner, r = CONFIG.repo, br = CONFIG.branch;
-  const dir = (CONFIG.pendingDir || CONFIG.videosDir || "").replace(/^\/+|\/+$/g, "");
+  const target = isAdmin() ? CONFIG.videosDir : (CONFIG.pendingDir || CONFIG.videosDir);
+  const dir = (target || "").replace(/^\/+|\/+$/g, "");
   const ext = (file.name.match(/\.[a-z0-9]+$/i) || [".mp4"])[0].toLowerCase();
   const base = slugify(caption) || slugify(file.name.replace(/\.[^.]+$/, "")) || "clip";
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -1638,6 +1688,50 @@ async function ghCommitFile(file, caption, onStep) {
   });
 
   return path;
+}
+
+/* ============================================================
+   העלאה ישירה ל-Cloudinary — בלי GitHub, בלי התחברות נוספת
+   ============================================================ */
+function cloudinaryOn() {
+  const c = C.cloudinary || {};
+  return !!(c.cloudName && c.uploadPreset);
+}
+
+/** מעלה קובץ ישירות ל-Cloudinary. onProgress מקבל אחוזים. */
+function cloudinaryUpload(file, caption, onProgress) {
+  return new Promise((res, rej) => {
+    const c = C.cloudinary;
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("upload_preset", c.uploadPreset);
+    if (caption) fd.append("context", "caption=" + caption.replace(/[|=]/g, " "));
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "https://api.cloudinary.com/v1_1/" + c.cloudName + "/video/upload");
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round(e.loaded / e.total * 100));
+    };
+    xhr.onload = () => {
+      let body = null;
+      try { body = JSON.parse(xhr.responseText); } catch {}
+      if (xhr.status >= 200 && xhr.status < 300 && body && body.secure_url) res(body);
+      else {
+        const msg = (body && body.error && body.error.message) || ("HTTP " + xhr.status);
+        rej(new Error(msg));
+      }
+    };
+    xhr.onerror = () => rej(new Error("אין חיבור לרשת"));
+    xhr.send(fd);
+  });
+}
+
+function cloudinaryError(e) {
+  const m = (e && e.message) || "";
+  if (/preset not found|Upload preset/i.test(m)) return "שם ה-preset שגוי, או שהוא לא מוגדר כ-Unsigned.";
+  if (/File size too large|too large/i.test(m)) return "הקובץ גדול מדי למכסה החינמית.";
+  if (/Invalid cloud_name|cloud_name/i.test(m)) return "שם הענן (cloud name) שגוי.";
+  return m || "שגיאה לא ידועה";
 }
 
 /* ---- תור האישורים של המנהל ---- */
@@ -1785,9 +1879,50 @@ async function openReview() {
   const body = () => $(".body", s);
 
   const render = async () => {
-    let list;
+    let list = [], cloudList = [];
+
+    // סרטונים שממתינים ב-Cloudinary — אישור כאן הוא עדכון שדה אחד, בלי גיטהאב
+    if (CL.on && CL.listClips) {
+      try {
+        cloudList = (await CL.listClips())
+          .filter(d => d.src && d.approved === false)
+          .sort((a, b) => (b.atMs || 0) - (a.atMs || 0));
+      } catch {}
+    }
+
     try { list = await listPending(); }
-    catch (e) { body().innerHTML = '<div class="empty-note">לא הצלחתי לקרוא את התור — ' + esc(e.message) + "</div>"; return; }
+    catch (e) { if (!cloudList.length) { body().innerHTML = '<div class="empty-note">לא הצלחתי לקרוא את התור — ' + esc(e.message) + "</div>"; return; } }
+
+    if (cloudList.length) {
+      body().innerHTML = cloudList.map((p, i) =>
+        '<div class="pend" data-ci="' + i + '">' +
+          '<video class="pvid" src="' + esc(p.src) + '" controls playsinline preload="metadata"></video>' +
+          '<div class="pname">' + esc(p.caption || "ללא כיתוב") + " · מאת " + esc(p.name || "אנונימי") + "</div>" +
+          '<div class="pacts">' +
+            '<button class="ok" data-cok="' + i + '">אשר לפיד</button>' +
+            '<button class="no" data-cno="' + i + '">דחה ומחק</button>' +
+          "</div><div class=\"pstat\"></div>" +
+        "</div>").join("") +
+        (list.length ? '<div class="who">ועוד ' + list.length + " בתיקיית pending בגיטהאב</div>" : "");
+
+      $$("[data-cok]", s).forEach(b => b.addEventListener("click", async () => {
+        const p = cloudList[+b.dataset.cok], row = b.closest(".pend");
+        $$("button", row).forEach(x => (x.disabled = true));
+        $(".pstat", row).textContent = "מאשר…";
+        try { await CL.approveClip(p.id); toast("אושר — יופיע בפיד"); await render(); }
+        catch (e) { $$("button", row).forEach(x => (x.disabled = false)); $(".pstat", row).textContent = ""; toast("לא אושר — " + cloudErr(e)); }
+      }));
+
+      $$("[data-cno]", s).forEach(b => b.addEventListener("click", async () => {
+        const p = cloudList[+b.dataset.cno], row = b.closest(".pend");
+        if (!confirm("למחוק את \"" + (p.caption || "הסרטון") + "\"?")) return;
+        $$("button", row).forEach(x => (x.disabled = true));
+        $(".pstat", row).textContent = "מוחק…";
+        try { await CL.deleteClip(p.id); toast("נדחה"); await render(); }
+        catch (e) { $$("button", row).forEach(x => (x.disabled = false)); $(".pstat", row).textContent = ""; toast("לא נמחק — " + cloudErr(e)); }
+      }));
+      return;
+    }
 
     if (!list.length) {
       body().innerHTML = '<div class="empty-note">אין סרטונים שממתינים.<br>כל מה שהועלה כבר טופל.</div>';
@@ -1879,38 +2014,20 @@ async function openUpload() {
 
   const draw = () => {
     const body = $("#upBody", s);
-    if (!CL.ghToken) {
-      body.innerHTML =
-        "<p>הסרטונים נשמרים ברפו <code>" + esc(C.owner + "/" + C.repo) + "</code>. " +
-        "כדי להעלות מכאן צריך להתחבר ל-GitHub עם חשבון שיש לו הרשאת כתיבה לרפו.</p>" +
-        '<button class="btn" id="ghlogin">' + GH_SVG + "להתחבר עם GitHub</button>" +
-        '<a class="btn ghost" href="' + uploadUrl + '" target="_blank" rel="noopener">או להעלות ידנית בגיטהאב</a>';
-      $("#ghlogin", s).addEventListener("click", async e => {
-        const b = e.currentTarget;
-        b.disabled = true; b.style.opacity = ".6";
-        try { await CL.ghSignIn(); draw(); }
-        catch (err) {
-          const c = (err && err.code) || "";
-          if (/popup-blocked/.test(c)) toast("הדפדפן חסם את חלון ההתחברות — אשר חלונות קופצים ונסה שוב");
-          else if (!/popup-closed-by-user|cancelled-popup-request/.test(c)) {
-            toast("ההתחברות נכשלה — " + ((err && err.message) || c));
-          }
-          b.disabled = false; b.style.opacity = "";
-        }
-      });
-      return;
-    }
+    const direct = isAdmin();     // המנהל מפרסם ישר, בלי תור
 
     body.innerHTML =
-      '<p>מחובר כ-<b>' + esc(CL.ghLogin || "github") + "</b></p>" +
       '<input type="file" id="vfile" accept="video/*" style="display:none">' +
       '<button class="btn ghost" id="pick">בחר סרטון מהמכשיר</button>' +
       '<div id="picked" class="upinfo"></div>' +
       '<input id="vcap" class="upcap" maxlength="80" placeholder="כיתוב (אופציונלי)">' +
-      '<button class="btn" id="go" disabled>שלח לאישור</button>' +
+      '<button class="btn" id="go" disabled>' + (direct ? "פרסם" : "שלח לאישור") + "</button>" +
       '<div id="ups" class="upstat"></div>' +
-      "<p style=\"margin-top:12px\">הסרטון לא עולה ישר לפיד — הוא נשלח לבדיקת המנהל, " +
-      "ומופיע רק אחרי שאושר. עד 100MB לקובץ, מומלץ MP4 אנכי עד ~30 שניות.</p>";
+      '<p style="margin-top:12px">' +
+      (direct ? "הסרטון יעלה ישר לפיד." : "הסרטון נשלח לבדיקת המנהל ומופיע רק אחרי שאושר.") +
+      " עד 100MB, מומלץ MP4 אנכי עד ~30 שניות." +
+      (CL.ghToken ? "" : "<br>בלחיצה תתבקש פעם אחת לאשר גישה ל-GitHub — שם הסרטונים נשמרים.") +
+      "</p>";
 
     const fileInput = $("#vfile", s), go = $("#go", s), info = $("#picked", s), st = $("#ups", s);
     $("#pick", s).addEventListener("click", () => fileInput.click());
@@ -1942,22 +2059,73 @@ async function openUpload() {
 
       go.disabled = true; go.style.opacity = ".6";
       $("#pick", s).disabled = true;
+
+      const fail = msg => {
+        st.textContent = "";
+        if (msg) toast(msg);
+        go.disabled = false; go.style.opacity = "";
+        $("#pick", s).disabled = false;
+      };
+
+      const cap = $("#vcap", s).value;
+
+      /* --- המסלול המהיר: העלאה ישירה ל-Cloudinary, בלי GitHub --- */
+      if (cloudinaryOn()) {
+        try {
+          st.textContent = "מעלה… 0%";
+          const up = await cloudinaryUpload(f, cap, p => { st.textContent = "מעלה… " + p + "%"; });
+          st.textContent = "שומר…";
+          await CL.setClip("cl-" + up.public_id.replace(/[^a-zA-Z0-9_-]/g, "-"), {
+            caption: cap, src: up.secure_url, approved: direct
+          });
+          if (direct) {
+            st.textContent = "פורסם ✓";
+            toast("הסרטון פורסם");
+            setTimeout(() => location.reload(), 1800);
+          } else {
+            st.textContent = "נשלח ✓ ממתין לאישור המנהל";
+            toast("הסרטון נשלח לאישור");
+            fileInput.value = ""; info.textContent = "";
+            $("#pick", s).disabled = false;
+          }
+        } catch (e) {
+          fail("ההעלאה נכשלה — " + cloudinaryError(e));
+        }
+        return;
+      }
+
+      /* --- המסלול הישן: קומיט לגיטהאב --- */
+      // ההתחברות ל-GitHub קורית כאן, כחלק מהפרסום — לא כמסך נפרד לפניו
+      if (!CL.ghToken) {
+        st.textContent = "מתחבר ל-GitHub…";
+        try { await CL.ghSignIn(); }
+        catch (err) {
+          const c = (err && err.code) || "";
+          if (/popup-blocked/.test(c)) return fail("הדפדפן חסם את חלון ההתחברות — אשר חלונות קופצים ונסה שוב");
+          if (/popup-closed-by-user|cancelled-popup-request/.test(c)) return fail(null);
+          return fail("ההתחברות נכשלה — " + ((err && err.message) || c));
+        }
+      }
+
       try {
-        const cap  = $("#vcap", s).value;
         const path = await ghCommitFile(f, cap, m => { st.textContent = m; });
         // רושמים מי העלה — כך לסרטון יש בעלים, תמונה וכיתוב בפיד
         try { await CL.setClip(clipKey(path), { caption: cap }); }
         catch (err) { console.warn("[cloud] clip meta:", err && err.code); }
-        st.textContent = "נשלח ✓ ממתין לאישור המנהל";
-        toast("הסרטון נשלח לאישור");
-        $("#pick", s).disabled = false;
-        fileInput.value = "";
-        info.textContent = "";
+
+        if (direct) {
+          st.textContent = "פורסם ✓ טוען את הפיד…";
+          toast("הסרטון פורסם");
+          setTimeout(() => location.reload(), 2500);
+        } else {
+          st.textContent = "נשלח ✓ ממתין לאישור המנהל";
+          toast("הסרטון נשלח לאישור");
+          $("#pick", s).disabled = false;
+          fileInput.value = "";
+          info.textContent = "";
+        }
       } catch (e) {
-        st.textContent = "";
-        toast("ההעלאה נכשלה — " + uploadError(e));
-        go.disabled = false; go.style.opacity = "";
-        $("#pick", s).disabled = false;
+        fail("ההעלאה נכשלה — " + uploadError(e));
       }
     });
   };
@@ -2034,9 +2202,13 @@ $("#btnMe").addEventListener("click", () => {
   const rev = $("#review", s);
   if (rev) {
     rev.addEventListener("click", openReview);
-    listPending().then(l => {
+    Promise.all([
+      listPending().catch(() => []),
+      (CL.on && CL.listClips ? CL.listClips().catch(() => []) : Promise.resolve([]))
+    ]).then(([gh, cl]) => {
+      const n = gh.length + cl.filter(d => d.src && d.approved === false).length;
       const c = $("#pcount", s);
-      if (c) c.textContent = l.length ? " (" + l.length + ")" : " (0)";
+      if (c) c.textContent = " (" + n + ")";
     }).catch(() => {});
   }
 
@@ -2151,6 +2323,12 @@ function showEmpty(reason) {
 }
 
 async function start() {
+  // הענן נטען ראשון — הפיד מורכב גם מסרטונים שנרשמו בו
+  CL = await Promise.race([
+    window.cloudReady,
+    new Promise(r => setTimeout(() => r(window.CLOUD), 6000))
+  ]);
+
   try {
     items = await discover();
   } catch (e) {
@@ -2162,11 +2340,6 @@ async function start() {
 
   if (!items.length) { showEmpty(); return; }
 
-  // Firestore אם מוגדר, אחרת מצב מקומי. אם הענן תקוע — ממשיכים בלעדיו אחרי 6 שניות
-  CL = await Promise.race([
-    window.cloudReady,
-    new Promise(r => setTimeout(() => r(window.CLOUD), 6000))
-  ]);
   cards = items.map(buildCard);
 
   const wireCloud = () => {
