@@ -218,6 +218,16 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
     display:block;
   }
   .card.cover video{object-fit:cover}
+  /* סרטון רחב מוצג במלואו, בלי לחתוך את הצדדים, עם רקע מטושטש מהפריים הראשון */
+  .card.fitw video{object-fit:contain;background:transparent}
+  .card .blurbg{
+    position:absolute;inset:-6%;z-index:0;pointer-events:none;
+    background-size:cover;background-position:center;
+    filter:blur(24px) saturate(1.4) brightness(.85);
+    opacity:0;transition:opacity .35s;
+  }
+  .card.fitw .blurbg{opacity:1}
+  .card video{position:relative;z-index:1}
 
   /* הילה עדינה למעלה ולמטה כדי שהטקסט ייקרא */
   .scrim{
@@ -285,6 +295,8 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
   .rail .act svg{width:31px;height:31px;filter:drop-shadow(0 1px 4px rgba(0,0,0,.45))}
   .rail .act span{font-size:11.5px;font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.5)}
   .rail .act.on svg{color:var(--accent)}
+  .rail .act.del svg{color:#ff8585}
+  .rail .act[hidden]{display:none}
   .rail .act:active{transform:scale(.9)}
   .rail .avatar{
     width:44px;height:44px;border-radius:50%;border:2px solid #fff;
@@ -640,13 +652,16 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
   .full .acts{width:100%;max-width:430px;display:flex;flex-direction:column;gap:9px}
   .full .tiny{margin-top:14px;font-size:12px;color:var(--dimmer);line-height:1.6;max-width:430px}
 
+  /* במסך רחב האפליקציה מוצגת כעמודה אחת ברוחב טלפון, ממורכזת.
+     כל הרצועות משתמשות באותו רוחב ובאותה שיטת מירכוז, אחרת הן יוצאות מיושרות. */
   @media (min-width:820px){
-    #feed{max-width:min(468px,calc((100dvh - 0px) * .5625));margin:0 auto;
-          box-shadow:0 0 0 1px rgba(255,255,255,.08);}
+    :root{--col:min(468px, calc(100dvh * 0.5625))}
     body{background:#0a0a0a}
-    .topbar,.tabbar,.pill{max-width:min(468px,calc(100dvh * .5625));margin-inline:auto}
-    .topbar{left:0;right:0}
-    .tabbar{left:50%;transform:translateX(-50%);border-radius:0}
+    #feed{max-width:var(--col);margin:0 auto;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
+    .topbar,.tabbar{left:0;right:0;width:var(--col);margin-inline:auto;transform:none}
+    .tabbar{border-radius:0}
+    .pill{left:50%;transform:translateX(-50%);max-width:var(--col)}
+    .full{left:0;right:0;width:var(--col);margin-inline:auto}
   }
 </style>
 </head>
@@ -693,7 +708,8 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
 <!-- ===== תבנית כרטיס סרטון ===== -->
 <template id="tpl">
   <section class="card loading">
-    <video playsinline webkit-playsinline muted loop preload="none" disablepictureinpicture x5-playsinline></video>
+    <div class="blurbg"></div>
+    <video playsinline webkit-playsinline muted loop preload="none" disablepictureinpicture x5-playsinline crossorigin="anonymous"></video>
     <div class="scrim"></div>
     <div class="spin"></div>
     <svg class="pausedIcon" viewBox="0 0 24 24" fill="#fff"><path d="M8 5.5v13L19 12 8 5.5z"/></svg>
@@ -724,6 +740,10 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
       <button class="act share">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 3v4.1C8.8 7.6 5.3 10.8 4 16c2.3-2.6 5.5-3.9 10-3.9V16l6-6.5L14 3z"/></svg>
         <span>שתף</span>
+      </button>
+      <button class="act del" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg>
+        <span>מחק</span>
       </button>
       <button class="disc"><svg viewBox="0 0 24 24" fill="#fff"><path d="M9 18V6l10-2v12" opacity=".9"/><circle cx="12" cy="12" r="1.6"/></svg></button>
     </div>
@@ -1190,8 +1210,13 @@ function buildCard(item, i) {
     const t = video.currentTime, dt = t - card._lastT;
     if (card.i === active && !video.paused && dt > 0 && dt < 1.5) card._watched += dt;
     card._lastT = t;
+    paintBlurBg(card);                 // הרקע המטושטש נתפס מפריים אמיתי, אחרי שהניגון התחיל
   });
   video.addEventListener("error", () => nextSource(card));
+
+  // סרטון רחב: לא חותכים אותו. מציגים אותו שלם, עם רקע מטושטש מהפריים הראשון
+  video.addEventListener("loadedmetadata", () => fitVideo(card));
+  video.addEventListener("loadeddata", () => { fitVideo(card); paintBlurBg(card); });
 
   /* --- הקשה: טאפ = השהיה, דאבל-טאפ = לייק --- */
   let tapTimer = null, lastTap = 0;
@@ -1219,6 +1244,7 @@ function buildCard(item, i) {
     toast(on ? "נשמר במועדפים" : "הוסר מהמועדפים");
   });
   $(".share", el).addEventListener("click", () => share(card));
+  $(".del", el).addEventListener("click", () => deleteOwnClip(card));
   $(".caption", el).addEventListener("click", e => e.currentTarget.classList.toggle("open"));
   $(".avatar", el).addEventListener("click", () => {
     const c = clips[card.clip] || {};
@@ -1254,6 +1280,45 @@ function buildCard(item, i) {
   return card;
 }
 
+/** בוחר אם למלא את המסך או להציג את הסרטון שלם.
+    חיתוך מותר רק כשהסרטון כמעט באותן פרופורציות של המסך; אחרת רואים הכל. */
+function fitVideo(card) {
+  const v = card.video;
+  if (!v.videoWidth || !v.videoHeight) return;
+  const videoRatio = v.videoWidth / v.videoHeight;
+  const cardRatio  = card.el.clientWidth / card.el.clientHeight || 0.5625;
+  const wide = videoRatio > cardRatio * 1.12;      // רחב מהמסך ביותר מ-12%
+  card.el.classList.toggle("fitw", wide);
+  card.el.classList.toggle("cover", !wide);
+}
+
+/** מצייר פריים אחד לקנבס ומשתמש בו כרקע מטושטש מאחורי סרטון רחב.
+    חשוב לתפוס רק אחרי שהניגון התחיל: פריים שנתפס מוקדם מדי יוצא שחור. */
+function paintBlurBg(card) {
+  const bg = $(".blurbg", card.el);
+  if (!bg || bg.dataset.done || !card.el.classList.contains("fitw")) return;
+  const v = card.video;
+  if (!v.videoWidth || v.readyState < 2 || v.currentTime < 0.05) return;
+  try {
+    const cv = document.createElement("canvas");
+    cv.width = 48; cv.height = Math.max(1, Math.round(48 * v.videoHeight / v.videoWidth));
+    const ctx = cv.getContext("2d");
+    ctx.drawImage(v, 0, 0, cv.width, cv.height);
+
+    // אם הפריים יצא שחור, מנסים שוב בפעם הבאה במקום לקבע רקע ריק
+    const px = ctx.getImageData(0, 0, cv.width, cv.height).data;
+    let sum = 0;
+    for (let i = 0; i < px.length; i += 4) sum += px[i] + px[i + 1] + px[i + 2];
+    if (sum / (px.length / 4) < 8) return;
+
+    bg.style.backgroundImage = "url(" + cv.toDataURL("image/jpeg", 0.6) + ")";
+    bg.dataset.done = "1";
+  } catch {
+    // וידאו ממקור אחר בלי הרשאת קריאה: נשארים עם רקע שחור, בלי לשבור כלום
+    bg.dataset.done = "1";
+  }
+}
+
 function nextSource(card) {
   card.srcIdx++;
   if (card.srcIdx < card.srcs.length) {
@@ -1285,6 +1350,8 @@ function detach(card) {
   card.srcIdx = 0;
   card.el.classList.remove("playing", "paused", "loading");
   $(".bar b", card.el).style.width = "0%";
+  const bg = $(".blurbg", card.el);
+  if (bg) { bg.style.backgroundImage = ""; delete bg.dataset.done; }   // ייבנה מחדש בטעינה הבאה
 }
 
 /* ============================================================
@@ -1551,6 +1618,42 @@ function paintOwner(card) {
     av.textContent = name.replace(/^@/, "").charAt(0).toUpperCase() || "?";
   }
   card.ownerUid = c.uid || null;
+
+  // כפתור מחיקה: רק ליוצר של הסרטון, או למנהל. מחיקה אפשרית רק לסרטון שהועלה מהאתר
+  const delBtn = $(".del", el);
+  if (delBtn) {
+    const me = CL.user && CL.user.uid;
+    const canDelete = CL.on && !!card.item.clipId && !!me && (c.uid === me || isAdmin());
+    delBtn.hidden = !canDelete;
+  }
+}
+
+/** מוחק סרטון שהועלה מהאתר. היוצר מוחק את שלו, המנהל מוחק הכל. */
+async function deleteOwnClip(card) {
+  const c = clips[card.clip] || {};
+  const me = CL.user && CL.user.uid;
+  if (!CL.on || !card.item.clipId || !me || !(c.uid === me || isAdmin())) return;
+
+  const title = c.caption || card.item.title || "הסרטון";
+  if (!confirm("למחוק את \"" + title + "\"?\nהוא ייעלם מהפיד לכולם.")) return;
+
+  const btn = $(".del", card.el);
+  btn.disabled = true;
+  try {
+    await CL.deleteClip(card.clip);
+    delete clips[card.clip];
+    card.el.remove();                                   // מוציאים אותו מהפיד מיד
+    const k = cards.indexOf(card);
+    if (k > -1) cards.splice(k, 1);
+    cards.forEach((x, j) => { x.i = j; });
+    toast("נמחק");
+    if (!cards.length) { location.reload(); return; }   // הפיד התרוקן
+    active = -1;
+    setActive(Math.min(k, cards.length - 1));
+  } catch (e) {
+    btn.disabled = false;
+    toast("לא נמחק — " + cloudErr(e));
+  }
 }
 
 /** בודק מול השרת אם המשתמש הנוכחי כבר עשה לייק לכרטיס הזה */
