@@ -389,7 +389,7 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
   .pill{
     position:fixed;left:50%;transform:translateX(-50%);
     bottom:calc(var(--tabbar) + var(--safe-b) + 26px);
-    z-index:20;background:rgba(0,0,0,.78);backdrop-filter:blur(8px);
+    z-index:60;background:rgba(0,0,0,.78);backdrop-filter:blur(8px);
     border:1px solid var(--line);border-radius:999px;
     padding:9px 16px;font-size:13.5px;font-weight:600;
     display:flex;align-items:center;gap:8px;
@@ -399,10 +399,10 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
   @keyframes up{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
 
   /* ---------- מגירות ---------- */
-  .backdrop{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.5);animation:fade .2s ease}
+  .backdrop{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.5);animation:fade .2s ease}
   @keyframes fade{from{opacity:0}to{opacity:1}}
   .sheet{
-    position:fixed;left:0;right:0;bottom:0;z-index:31;
+    position:fixed;left:0;right:0;bottom:0;z-index:51;
     max-height:78vh;display:flex;flex-direction:column;
     background:var(--sheet);border-radius:16px 16px 0 0;
     padding-bottom:var(--safe-b);
@@ -413,6 +413,8 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
     margin:0;padding:15px 16px 12px;font-size:14.5px;text-align:center;
     border-bottom:1px solid var(--line);position:relative;font-weight:700;
   }
+  .sheet h3 .bk{position:absolute;right:14px;top:13px;opacity:.75;padding:2px}
+  .sheet h3 .bk svg{width:19px;height:19px}
   .sheet h3 .x{position:absolute;left:14px;top:14px;opacity:.6}
   .sheet h3 .x svg{width:17px;height:17px}
   .sheet .body{overflow-y:auto;padding:14px 16px 18px;-webkit-overflow-scrolling:touch}
@@ -539,6 +541,70 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
     text-shadow:0 1px 3px rgba(0,0,0,.8);
   }
   .meta .author{cursor:pointer}
+  /* ---------- תפריט מנהל ---------- */
+  .tools{display:flex;align-items:center;gap:8px}
+  .iconBtn[hidden]{display:none}
+  .iconBtn.admin{position:relative;color:#ffd54f;background:rgba(255,193,7,.16);box-shadow:0 0 0 1px rgba(255,193,7,.35) inset}
+  .dotb{
+    position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;
+    background:var(--accent);border:2px solid #000;
+  }
+  .dotb[hidden]{display:none}
+  .adm-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .adm-head .pic{
+    width:48px;height:48px;border-radius:50%;overflow:hidden;flex:0 0 auto;
+    background:linear-gradient(140deg,#333,#555);
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;
+    box-shadow:0 0 0 2px #ffd54f;
+  }
+  .adm-head .nm{font-weight:800;font-size:16px;display:flex;align-items:center;gap:8px}
+  .adm-head .role{
+    font-size:11px;font-weight:800;color:#1b1400;border-radius:999px;padding:2px 9px;
+    background:linear-gradient(90deg,#ffd54f,#ffb300);
+  }
+  .adm-head .sub{font-size:12px;color:var(--dimmer);margin-top:2px;direction:ltr;text-align:right}
+  .adm-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+  .adm-stats div{
+    background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:12px;
+    padding:10px 4px;text-align:center;
+  }
+  .adm-stats b{display:block;font-size:19px;font-weight:800}
+  .adm-stats span{font-size:11px;color:var(--dimmer)}
+  .adm-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+  .tile{
+    position:relative;display:flex;flex-direction:column;gap:7px;text-align:right;
+    background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:14px;
+    padding:14px 12px;min-height:96px;transition:transform .12s, background .12s;
+  }
+  .tile:active{transform:scale(.97);background:rgba(255,255,255,.1)}
+  .tile svg{width:25px;height:25px;color:var(--accent-2)}
+  .tile.warn svg{color:#ffd54f}
+  .tile.danger svg{color:#ff7b7b}
+  .tile b{font-size:14.5px;font-weight:800}
+  .tile small{font-size:11.5px;color:var(--dimmer);line-height:1.45}
+  .tile .badge{
+    position:absolute;top:10px;left:10px;background:var(--accent);color:#fff;font-size:11.5px;
+    font-weight:800;border-radius:999px;min-width:22px;height:22px;padding:0 6px;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .tile .badge[hidden]{display:none}
+  .adm-sec{font-size:12px;color:var(--dimmer);margin:2px 2px 8px;font-weight:700}
+  .adm-links{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+  .adm-links a{
+    font-size:12.5px;color:var(--dim);text-decoration:none;font-weight:600;
+    background:rgba(255,255,255,.07);border-radius:999px;padding:8px 13px;
+  }
+  .adm-links a:active{background:rgba(255,255,255,.14)}
+
+  /* מסך "אין סרטונים": משאיר את הבר התחתון חי, כדי שאפשר יהיה ללחוץ + ו"אני" */
+  .full.empty{bottom:calc(var(--tabbar) + var(--safe-b));z-index:9}
+  .btn.danger{background:#c0392b}
+  .mrow-note{font-size:12.5px;color:var(--dimmer);line-height:1.6;margin:0 0 12px}
+  .tag{
+    display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:1px 7px;
+    margin-inline-start:6px;background:rgba(255,255,255,.12);color:var(--dim);
+  }
+  .tag.wait{background:rgba(255,193,7,.2);color:#ffd54f}
   .btn.follow{margin-top:16px;max-width:220px;margin-inline:auto}
   .btn.follow.on{background:rgba(255,255,255,.12)}
   .upcap{
@@ -593,9 +659,15 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
     <button data-tab="following">עוקבים</button>
     <button data-tab="foryou" class="on">בשבילך</button>
   </div>
-  <button class="iconBtn" id="btnSound" title="קול">
-    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 9h3l5-4v14l-5-4H4V9z"/><path id="sndWave" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path id="sndMute" d="M16 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-  </button>
+  <div class="tools">
+    <button class="iconBtn admin" id="btnAdmin" title="תפריט מנהל" aria-label="תפריט מנהל" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z"/><path d="M9.5 12l1.8 1.8 3.4-3.6"/></svg>
+      <i class="dotb" id="admDot" hidden></i>
+    </button>
+    <button class="iconBtn" id="btnSound" title="קול">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 9h3l5-4v14l-5-4H4V9z"/><path id="sndWave" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path id="sndMute" d="M16 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+    </button>
+  </div>
 </div>
 
 <!-- ===== הפיד ===== -->
@@ -1598,16 +1670,19 @@ function share(card) {
 
 /* --- מגירת תגובות --- */
 let openSheet = null, sheetCleanup = null;
-function sheet(title, bodyHtml, footerHtml) {
+function sheet(title, bodyHtml, footerHtml, onBack) {
   closeSheet();
   const back = document.createElement("div"); back.className = "backdrop";
   const s = document.createElement("div"); s.className = "sheet";
   s.innerHTML =
-    '<h3><button class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' + title + "</h3>" +
+    '<h3><button class="x" aria-label="סגור"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' +
+    (onBack ? '<button class="bk" aria-label="חזרה"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>' : "") +
+    title + "</h3>" +
     '<div class="body">' + bodyHtml + "</div>" + (footerHtml || "");
   document.body.append(back, s);
   back.addEventListener("click", closeSheet);
   $(".x", s).addEventListener("click", closeSheet);
+  if (onBack) $(".bk", s).addEventListener("click", () => onBack());   // בלי להעביר את אובייקט האירוע הלאה
   openSheet = [back, s];
   return s;
 }
@@ -1998,6 +2073,51 @@ function approvedPathFor(pendingPath) {
   return (dir ? dir + "/" : "") + name;
 }
 
+/** כל סרטוני הווידאו ברפו (כולל תיקיית ההמתנה), לצורך מסך הניהול */
+async function listRepoVideos() {
+  const api = `https://api.github.com/repos/${C.owner}/${C.repo}/git/trees/${C.branch}?recursive=1&t=${Date.now()}`;
+  const r = await fetch(api, { headers: { Accept: "application/vnd.github+json" }, cache: "no-store" });
+  if (r.status === 404 || r.status === 409) return [];       // רפו ריק
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const data = await r.json();
+  const pend = (C.pendingDir || "").replace(/^\/+|\/+$/g, "").toLowerCase();
+  return (data.tree || [])
+    .filter(n => n.type === "blob" && VIDEO_EXT.test(n.path))
+    .map(n => ({ path: n.path, size: n.size || 0,
+                 pending: !!pend && n.path.toLowerCase().startsWith(pend + "/") }));
+}
+
+/** מוחק קבצי וידאו מהרפו בקומיט אחד. ההיסטוריה של גיט שומרת אותם, אז אפשר לשחזר.
+    ההגנה הקשיחה: רק קובץ עם סיומת וידאו עובר. index.html ושאר הקבצים לעולם לא ייגעו. */
+async function ghDeletePaths(paths, message) {
+  const safe = paths.filter(p => VIDEO_EXT.test(p) && !/(^|\/)index\.html$/i.test(p));
+  if (!safe.length) return 0;
+  const o = C.owner, r = C.repo, br = C.branch;
+  const ref  = await ghFetch(`/repos/${o}/${r}/git/ref/heads/${br}`);
+  const head = await ghFetch(`/repos/${o}/${r}/git/commits/${ref.object.sha}`);
+  const tree = await ghFetch(`/repos/${o}/${r}/git/trees`, {
+    method: "POST",
+    body: JSON.stringify({
+      base_tree: head.tree.sha,
+      tree: safe.map(p => ({ path: p, mode: "100644", type: "blob", sha: null }))   // null = מחיקה
+    })
+  });
+  const commit = await ghFetch(`/repos/${o}/${r}/git/commits`, {
+    method: "POST",
+    body: JSON.stringify({ message, tree: tree.sha, parents: [ref.object.sha] })
+  });
+  await ghFetch(`/repos/${o}/${r}/git/refs/heads/${br}`, {
+    method: "PATCH", body: JSON.stringify({ sha: commit.sha })
+  });
+  return safe.length;
+}
+
+/* נקודת המחיקה היחידה של מסך הניהול. הפרדה זו מאפשרת לבדוק את כל הזרימה בלי למחוק באמת */
+const manageOps = {
+  deleteClipDoc:   key => CL.deleteClip(key),
+  deleteRepoFiles: (paths, msg) => ghDeletePaths(paths, msg)
+};
+
 function uploadError(e) {
   const m = (e && e.message) || "";
   if (e && e.status === 404) return "אין לך הרשאת כתיבה לרפו הזה.";
@@ -2086,10 +2206,225 @@ function openProfile(uid, fallbackName, fallbackPhoto) {
 }
 
 /* ============================================================
+   תפריט מנהל: מסך אחד שמרכז את כל הכלים. מוצג רק למנהל
+   ============================================================ */
+let pendingCount = null;                       // מתעדכן ברקע; null = עוד לא נבדק
+let pendingAt = 0;
+
+/** כמה סרטונים ממתינים: גם ב-Cloudinary (approved=false) וגם בתיקיית ההמתנה בגיטהאב.
+    ה-API של גיטהאב מוגבל ל-60 בקשות לשעה, ולכן התוצאה נשמרת לדקה. */
+async function countPending(force) {
+  if (!force && pendingCount !== null && Date.now() - pendingAt < 60000) return pendingCount;
+  // עם Cloudinary ההעלאות לא עוברות דרך תיקיית ההמתנה בגיטהאב, אז אין טעם לבזבז עליה בקשה
+  const [gh, cl] = await Promise.all([
+    cloudinaryOn() ? Promise.resolve([]) : listPending().catch(() => []),
+    (CL.on && CL.listClips ? CL.listClips().catch(() => []) : Promise.resolve([]))
+  ]);
+  pendingCount = gh.length + cl.filter(d => d.src && d.approved === false).length;
+  pendingAt = Date.now();
+  return pendingCount;
+}
+
+/** הודעה ברורה לשגיאות של ה-API של גיטהאב */
+function ghApiMsg(e) {
+  const m = (e && e.message) || "";
+  if (/403|rate/i.test(m)) return "גיטהאב חוסם זמנית (מגבלה של 60 בקשות לשעה). נסה שוב בעוד כמה דקות";
+  return m || "שגיאה לא ידועה";
+}
+
+/** מציג/מסתיר את כפתור המנהל בבר העליון, ומעדכן את הנקודה האדומה */
+function syncAdminUi() {
+  const btn = $("#btnAdmin"), dot = $("#admDot");
+  if (!btn) return;
+  const on = isAdmin();
+  btn.hidden = !on;
+  if (!on) { pendingCount = null; dot.hidden = true; return; }
+  countPending().then(n => { dot.hidden = !n; dot.title = n + " ממתינים"; }).catch(() => {});
+}
+
+const ADM_ICON = {
+  inbox:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l2.5-7h11L20 13v6H4v-6z"/><path d="M4 13h4.5l1 2.5h5l1-2.5H20"/></svg>',
+  trash:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg>',
+  plus:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  user:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20c.9-3.6 3.8-5.4 7.2-5.4s6.3 1.8 7.2 5.4"/></svg>'
+};
+
+function openAdmin() {
+  if (!isAdmin()) return;
+  const u = CL.user;
+  const sum = (f) => Object.values(stats).reduce((a, s) => a + Math.max(0, s[f] || 0), 0);
+  const tile = (id, cls, icon, title, sub) =>
+    '<button class="tile ' + cls + '" id="' + id + '">' + icon + "<b>" + title + "</b><small>" + sub +
+    '</small><span class="badge" hidden></span></button>';
+
+  const s = sheet("תפריט מנהל",
+    '<div class="adm-head"><div class="pic">' +
+      (u.photo ? '<img class="me-av" src="' + esc(u.photo) + '" alt="" referrerpolicy="no-referrer">' : esc(u.name.charAt(0).toUpperCase())) +
+      '</div><div><div class="nm">' + esc(u.name) + ' <span class="role">מנהל</span></div>' +
+      '<div class="sub">' + esc(u.email) + "</div></div></div>" +
+
+    '<div class="adm-stats">' +
+      "<div><b>" + cards.length + "</b><span>בפיד</span></div>" +
+      '<div><b id="stP">…</b><span>ממתינים</span></div>' +
+      "<div><b>" + fmt(sum("likes")) + "</b><span>לייקים</span></div>" +
+      "<div><b>" + fmt(sum("comments")) + "</b><span>תגובות</span></div>" +
+    "</div>" +
+
+    '<div class="adm-grid">' +
+      tile("t-review", "warn",   ADM_ICON.inbox, "ממתינים לאישור", "אשר או דחה העלאות") +
+      tile("t-manage", "danger", ADM_ICON.trash, "ניהול סרטונים",  "מחיקה, כולל ״מחק הכול״") +
+      tile("t-upload", "",       ADM_ICON.plus,  "העלאת סרטון",    "עובר אישור כמו כולם") +
+      tile("t-prof",   "",       ADM_ICON.user,  "הפרופיל שלי",    "הסרטונים והמספרים שלי") +
+    "</div>" +
+
+    '<div class="adm-sec">כלים חיצוניים</div>' +
+    '<div class="adm-links">' +
+      '<a href="https://console.firebase.google.com/project/xryubho-feed/firestore" target="_blank" rel="noopener">Firebase</a>' +
+      '<a href="https://console.cloudinary.com/" target="_blank" rel="noopener">Cloudinary</a>' +
+      '<a href="' + repoUrl + '" target="_blank" rel="noopener">GitHub</a>' +
+    "</div>");
+
+  $("#t-review", s).addEventListener("click", openReview);
+  $("#t-manage", s).addEventListener("click", openManage);
+  $("#t-upload", s).addEventListener("click", () => { closeSheet(); openUpload(); });
+  $("#t-prof",   s).addEventListener("click", () => { closeSheet(); openProfile(u.uid); });
+
+  const paintPending = n => {
+    const badge = $("#t-review .badge", s), st = $("#stP", s);
+    if (st) st.textContent = n;
+    if (badge) { badge.textContent = n; badge.hidden = !n; }
+    const dot = $("#admDot"); if (dot) dot.hidden = !n;
+  };
+  if (pendingCount !== null) paintPending(pendingCount);          // הצגה מיידית מהמטמון
+  countPending().then(paintPending).catch(() => { const st = $("#stP", s); if (st) st.textContent = "?"; });
+}
+
+/* ============================================================
+   מסך ניהול — מחיקת סרטונים (רק המנהל, רק בלחיצה שלו)
+   ============================================================ */
+async function openManage() {
+  if (!isAdmin()) return;
+  const s = sheet("ניהול סרטונים", '<div class="empty-note">טוען…</div>', "", openAdmin);
+  const body = () => $(".body", s);
+
+  const ensureGh = async () => { if (!CL.ghToken) await CL.ghSignIn(); };
+  const ghErr = err => {
+    const c = (err && err.code) || "";
+    if (/popup-blocked/.test(c)) return "הדפדפן חסם את חלון ההתחברות. אשר חלונות קופצים ונסה שוב";
+    if (/popup-closed-by-user|cancelled-popup-request/.test(c)) return null;
+    return "ההתחברות ל-GitHub נכשלה";
+  };
+
+  const render = async () => {
+    let cloud = [], repo = [];
+    try { if (CL.on && CL.listClips) cloud = (await CL.listClips()).filter(d => d.src); } catch {}
+    try { repo = await listRepoVideos(); }
+    catch (e) { if (!cloud.length) { body().innerHTML = '<div class="empty-note">לא הצלחתי לקרוא את הרפו.<br>' + esc(ghApiMsg(e)) + "</div>"; return; } }
+
+    const rows = [
+      ...cloud.map(d => ({
+        kind: "cloud", id: d.id, wait: d.approved === false,
+        name: d.caption || "סרטון ללא שם", by: d.name || ""
+      })),
+      ...repo.map(v => ({
+        kind: "repo", path: v.path, wait: v.pending,
+        name: prettify(v.path), by: "", size: v.size
+      }))
+    ];
+
+    if (!rows.length) {
+      body().innerHTML = '<div class="empty-note">אין סרטונים.<br>הפיד נקי.</div>';
+      return;
+    }
+
+    body().innerHTML =
+      '<p class="mrow-note">' + rows.length + " סרטונים. מחיקה מסירה את הסרטון מהפיד.<br>" +
+      "קבצים בגיטהאב נמחקים בקומיט, וההיסטוריה של הרפו שומרת אותם אם תרצה לשחזר. " +
+      "קבצים ב-Cloudinary נשארים בחשבון שם עד שתמחק אותם בקונסולה שלהם (הם לא יופיעו בפיד).</p>" +
+      '<button class="btn danger" id="delAll">מחק הכול</button>' +
+      '<div id="mrows" style="margin-top:12px">' + rows.map((r, i) =>
+        '<div class="pend" data-m="' + i + '">' +
+          '<div class="pname">' + esc(r.name) +
+            '<span class="tag">' + (r.kind === "cloud" ? "Cloudinary" : "גיטהאב") + "</span>" +
+            (r.wait ? '<span class="tag wait">ממתין</span>' : "") +
+            (r.by ? "<br>מאת " + esc(r.by) : "") + "</div>" +
+          '<div class="pacts"><button class="no" data-mdel="' + i + '">מחק</button></div>' +
+          '<div class="pstat"></div>' +
+        "</div>").join("") + "</div>";
+
+    const lock = (on, msg) => {
+      $$("#delAll, [data-mdel]", s).forEach(b => (b.disabled = on));
+      const st = $$(".pstat", s)[0]; if (st && msg) st.textContent = msg;
+    };
+
+    /* --- מחיקת סרטון אחד --- */
+    $$("[data-mdel]", s).forEach(b => b.addEventListener("click", async () => {
+      const r = rows[+b.dataset.mdel], row = b.closest(".pend"), st = $(".pstat", row);
+      if (!confirm("למחוק את \"" + r.name + "\"?")) return;
+      $$("#delAll, [data-mdel]", s).forEach(x => (x.disabled = true));
+      try {
+        if (r.kind === "repo") {
+          st.textContent = "מתחבר ל-GitHub…";
+          try { await ensureGh(); } catch (err) { const m = ghErr(err); throw new Error(m || "בוטל"); }
+          st.textContent = "מוחק מהרפו…";
+          await manageOps.deleteRepoFiles([r.path], "מחיקת סרטון: " + r.path.split("/").pop());
+          store.set("cache", []);                                              // לא משאירים רשימה ישנה שמצביעה על קובץ שנמחק
+          try { await manageOps.deleteClipDoc(clipKey(r.path)); } catch {}      // רשומת הבעלים של הסרטון
+        } else {
+          st.textContent = "מוחק…";
+          await manageOps.deleteClipDoc(r.id);
+        }
+        toast("נמחק");
+        await render();
+      } catch (err) {
+        $$("#delAll, [data-mdel]", s).forEach(x => (x.disabled = false));
+        st.textContent = "";
+        if (err && err.message !== "בוטל") toast("לא נמחק: " + (err.status ? uploadError(err) : cloudErr(err)));
+      }
+    }));
+
+    /* --- מחיקת הכול: דורש הקלדה מפורשת --- */
+    $("#delAll", s).addEventListener("click", async () => {
+      const phrase = "מחק הכול";
+      const typed = prompt("זה ימחק את כל " + rows.length + " הסרטונים, כולל אלה שממתינים לאישור.\nכדי לאשר כתוב בדיוק: " + phrase);
+      if ((typed || "").trim() !== phrase) { toast("בוטל. לא נמחק כלום"); return; }
+
+      $$("#delAll, [data-mdel]", s).forEach(x => (x.disabled = true));
+      const first = $(".pstat", s);
+      const say = m => { if (first) first.textContent = m; };
+      try {
+        const repoPaths = rows.filter(r => r.kind === "repo").map(r => r.path);
+        if (repoPaths.length) {
+          say("מתחבר ל-GitHub…");
+          try { await ensureGh(); } catch (err) { const m = ghErr(err); throw new Error(m || "בוטל"); }
+          say("מוחק " + repoPaths.length + " קבצים מהרפו…");
+          await manageOps.deleteRepoFiles(repoPaths, "ניקוי כל הסרטונים");      // קודם גיטהאב: הצעד שעלול להיכשל
+        }
+        store.set("cache", []);                                                // הרשימה השמורה כבר לא נכונה
+        for (const r of rows) {
+          say("מוחק רשומות…");
+          try { await manageOps.deleteClipDoc(r.kind === "cloud" ? r.id : clipKey(r.path)); } catch {}
+        }
+        taste = {}; seenLog = {};                                              // מתחילים מאפס גם בהעדפות
+        store.set("taste", taste); store.set("seen", seenLog);
+        toast("הכול נמחק");
+        setTimeout(() => location.reload(), 1400);
+      } catch (err) {
+        $$("#delAll, [data-mdel]", s).forEach(x => (x.disabled = false));
+        say("");
+        if (err && err.message !== "בוטל") toast("לא נמחק: " + (err.status ? uploadError(err) : cloudErr(err)));
+      }
+    });
+  };
+
+  await render();
+}
+
+/* ============================================================
    מסך המנהל — אישור או דחייה של סרטונים שהועלו
    ============================================================ */
 async function openReview() {
-  const s = sheet("ממתינים לאישור", '<div class="empty-note">טוען…</div>', "");
+  const s = sheet("ממתינים לאישור", '<div class="empty-note">טוען…</div>', "", openAdmin);
   const body = () => $(".body", s);
 
   const render = async () => {
@@ -2105,7 +2440,11 @@ async function openReview() {
     }
 
     try { list = await listPending(); }
-    catch (e) { if (!cloudList.length) { body().innerHTML = '<div class="empty-note">לא הצלחתי לקרוא את התור — ' + esc(e.message) + "</div>"; return; } }
+    catch (e) { if (!cloudList.length) { body().innerHTML = '<div class="empty-note">לא הצלחתי לקרוא את התור.<br>' + esc(ghApiMsg(e)) + "</div>"; return; } }
+
+    // המספר מהמסך הזה הוא הנכון ביותר. מעדכנים גם את הנקודה האדומה בבר העליון
+    pendingCount = cloudList.length + list.length; pendingAt = Date.now();
+    const dot = $("#admDot"); if (dot) dot.hidden = !pendingCount;
 
     if (cloudList.length) {
       body().innerHTML = cloudList.map((p, i) =>
@@ -2366,6 +2705,7 @@ async function openUpload() {
   draw();
 }
 $("#btnUpload").addEventListener("click", openUpload);
+$("#btnAdmin").addEventListener("click", openAdmin);
 
 $("#btnSearch").addEventListener("click", () => {
   const s = sheet("חיפוש",
@@ -2435,7 +2775,7 @@ $("#btnMe").addEventListener("click", () => {
     "<p>" + status + "</p>" +
     "<p><b>" + mine + "</b> לייקים · <b>" + favs + "</b> שמורים · <b>" + items.length + "</b> סרטונים בענן</p>" +
     (signedIn() ? '<button class="btn ghost" id="myprof">הפרופיל שלי</button>' : "") +
-    (isAdmin() ? '<button class="btn" id="review">ממתינים לאישור<span id="pcount"></span></button>' : "") +
+    (isAdmin() ? '<button class="btn" id="admMenu">תפריט מנהל</button>' : "") +
     (signedIn() ? '<button class="btn ghost" id="gso">להתנתק</button>' : "") +
     '<a class="btn ghost" href="' + repoUrl + '" target="_blank" rel="noopener">לנהל את הסרטונים בגיטהאב</a>');
 
@@ -2451,18 +2791,8 @@ $("#btnMe").addEventListener("click", () => {
     toast("ההעדפות אופסו");
   });
 
-  const rev = $("#review", s);
-  if (rev) {
-    rev.addEventListener("click", openReview);
-    Promise.all([
-      listPending().catch(() => []),
-      (CL.on && CL.listClips ? CL.listClips().catch(() => []) : Promise.resolve([]))
-    ]).then(([gh, cl]) => {
-      const n = gh.length + cl.filter(d => d.src && d.approved === false).length;
-      const c = $("#pcount", s);
-      if (c) c.textContent = " (" + n + ")";
-    }).catch(() => {});
-  }
+  const am = $("#admMenu", s);
+  if (am) am.addEventListener("click", openAdmin);
 
   const si = $("#gsi3", s);
   if (si) si.addEventListener("click", e => doSignIn(e.currentTarget));
@@ -2563,6 +2893,27 @@ document.addEventListener("visibilitychange", () => {
    8. הפעלה
    ============================================================ */
 function showEmpty(reason) {
+  /* עם Cloudinary: מעלים ישר מהאפליקציה, בלי הוראות גיטהאב */
+  if (cloudinaryOn()) {
+    boot.classList.add("empty");
+    boot.innerHTML =
+      '<div class="logo"><svg viewBox="0 0 24 24" fill="#fff"><path d="M9 6.5v11l9-5.5-9-5.5z"/></svg></div>' +
+      "<h1>" + (C.appName ? esc(C.appName) : "אין עדיין סרטונים") + "</h1>" +
+      "<h2>" + esc(reason || "הפיד ריק. הסרטון הראשון יופיע כאן") + "</h2>" +
+      '<div class="acts">' +
+      '<button class="btn" id="emptyUp">העלה סרטון</button>' +
+      (isAdmin() ? '<button class="btn ghost" id="emptyRev">תפריט מנהל</button>' : "") +
+      '<button class="btn ghost" onclick="location.reload()">רענן</button>' +
+      "</div>" +
+      '<p class="tiny">כל העלאה נשלחת לאישור המנהל ומופיעה בפיד רק אחרי שאושרה' +
+      (isAdmin() ? ": אחרי ההעלאה לך ל״אני״ ← ״ממתינים לאישור״." : ".") + "</p>";
+    $("#emptyUp", boot).addEventListener("click", openUpload);
+    const er = $("#emptyRev", boot);
+    if (er) er.addEventListener("click", openAdmin);
+    boot.classList.remove("hidden");
+    return;
+  }
+
   boot.innerHTML =
     '<div class="logo"><svg viewBox="0 0 24 24" fill="#fff"><path d="M9 6.5v11l9-5.5-9-5.5z"/></svg></div>' +
     "<h1>" + (C.appName ? esc(C.appName) : "הפיד מחכה לסרטון הראשון") + "</h1>" +
@@ -2597,7 +2948,11 @@ async function start() {
     return;
   }
 
-  if (!items.length) { showEmpty(); return; }
+  if (!items.length) {
+    if (CL.on) CL.onUser(() => syncAdminUi());     // גם בפיד ריק המנהל צריך את התפריט שלו
+    showEmpty();
+    return;
+  }
 
   /* סדר הפיד: מותאם אישית ("בשבילך"), חוץ מקישור ישן מהצורה #v3 שמבוסס על מיקום */
   const legacy = location.hash.match(/^#v(\d+)$/);
@@ -2631,7 +2986,9 @@ async function start() {
       cards.forEach(paintCounts);
       refreshLiked(cards[active]);
       applyTab();
+      syncAdminUi();                                      // כפתור המנהל מופיע רק למנהל
     });
+    syncAdminUi();
   };
 
   // אם הענן איחר לענות, מחברים אותו כשהוא מגיע במקום לוותר עליו
