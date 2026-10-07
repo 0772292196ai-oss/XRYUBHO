@@ -500,6 +500,25 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
   .pacts .no{background:rgba(255,255,255,.12);color:#ff8585}
   .pacts button:disabled{opacity:.45}
   .pstat{font-size:12.5px;color:var(--accent-2);text-align:center;margin-top:7px;min-height:16px}
+  .prof{text-align:center;padding:4px 0 16px;border-bottom:1px solid var(--line);margin-bottom:14px}
+  .ppic{
+    width:88px;height:88px;border-radius:50%;margin:0 auto 10px;overflow:hidden;
+    background:linear-gradient(140deg,#333,#555);
+    display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;
+  }
+  .pname2{font-weight:800;font-size:17px}
+  .pstats{display:flex;justify-content:center;gap:34px;margin-top:14px}
+  .pstats div{display:flex;flex-direction:column;align-items:center}
+  .pstats b{font-size:17px;font-weight:800}
+  .pstats span{font-size:12px;color:var(--dimmer);margin-top:2px}
+  .pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
+  .pcell{position:relative;aspect-ratio:9/16;overflow:hidden;border-radius:4px;background:#111}
+  .pcell video{width:100%;height:100%;object-fit:cover;display:block}
+  .plikes{
+    position:absolute;right:5px;bottom:5px;font-size:11px;font-weight:700;
+    text-shadow:0 1px 3px rgba(0,0,0,.8);
+  }
+  .meta .author{cursor:pointer}
   .upcap{
     width:100%;background:rgba(255,255,255,.1);border:0;border-radius:10px;
     padding:12px 14px;color:#fff;font-size:14.5px;outline:none;margin:8px 0 10px;
@@ -732,6 +751,21 @@ const done = window.__cloudDone;
       await b.commit();
     };
 
+    /* ---- מי העלה כל סרטון: שם, תמונה, כיתוב ---- */
+    api.watchClips = cb => fs.onSnapshot(
+      fs.collection(db, "clips"),
+      snap => { const m = {}; snap.forEach(d => (m[d.id] = d.data() || {})); cb(m); },
+      err => console.warn("[cloud] clips:", err.message)
+    );
+
+    api.setClip = (key, data) => fs.setDoc(fs.doc(db, "clips", key), {
+      uid:     api.uid,
+      name:    (api.user && api.user.name)  || "",
+      photo:   (api.user && api.user.photo) || "",
+      caption: data.caption || "",
+      at:      fs.serverTimestamp()
+    });
+
     /** תגובות בזמן אמת */
     api.watchComments = (k, cb) => fs.onSnapshot(
       fs.query(cmts(k), fs.orderBy("at", "desc"), fs.limit(200)),
@@ -796,6 +830,7 @@ let   firstGestureDone = false;
 let   CL    = { on: false };   // ה-API מהסקריפט שלמעלה (או מצב מקומי)
 const stats = {};              // { vidKey: {likes, comments} } — מתעדכן בזמן אמת
 const liked = new Map();       // { vidKey: true/false } — הלייקים שלי
+const clips = {};              // { clipKey: {uid, name, photo, caption} } — מי העלה מה
 
 /** מזהה יציב לסרטון, חוקי כ-document id ב-Firestore */
 function vidKey(path) {
@@ -864,11 +899,22 @@ function srcsFor(path) {
   return out;
 }
 
+/** מזהה יציב לסרטון לפי שם הקובץ בלבד — שורד את המעבר מ-pending ל-videos */
+function clipKey(path) {
+  const base = decodeURIComponent(path.split("/").pop()).replace(VIDEO_EXT, "");
+  let h = 0;
+  for (let i = 0; i < base.length; i++) h = (h * 31 + base.charCodeAt(i)) >>> 0;
+  const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50);
+  return (slug || "c") + "-" + h.toString(36);
+}
+
 function prettify(path) {
   return decodeURIComponent(path.split("/").pop())
     .replace(VIDEO_EXT, "")
     .replace(/^\d{8}-/, "")          // חותמת התאריך שההעלאה מהאתר מוסיפה
     .replace(/-[a-z0-9]{4}$/i, "")   // והסיומת האקראית
+    .replace(/\[[^\]]*\]/g, " ")     // [BEN EAGLE], [9JsbHS1m9Wk] וכו'
+    .replace(/[（(][^)）]*[)）]/g, " ")
     .replace(/[-_]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -966,12 +1012,10 @@ function buildCard(item, i) {
   if (item.poster) video.poster = item.poster;
   video.muted = true;                                 // חובה בשביל autoplay; משתחרר אחרי מחווה ראשונה
 
-  $(".author", el).textContent  = item.author || C.defaultAuthor;
-  $(".caption", el).textContent = item.title || "";
-  $(".marq", el).textContent    = item.sound || "הצליל המקורי";
-  $(".avatar", el).textContent  = (item.author || "?").replace(/^@/, "").charAt(0).toUpperCase() || "?";
+  $(".marq", el).textContent = item.sound || "הצליל המקורי";
 
-  const card = { el, video, item, srcs, srcIdx: 0, i };
+  const card = { el, video, item, srcs, srcIdx: 0, i, clip: clipKey(item.path) };
+  paintOwner(card);
 
   /* --- נגן: מצבים --- */
   video.addEventListener("waiting",      () => el.classList.add("loading"));
@@ -1011,7 +1055,12 @@ function buildCard(item, i) {
   });
   $(".share", el).addEventListener("click", () => share(card));
   $(".caption", el).addEventListener("click", e => e.currentTarget.classList.toggle("open"));
-  $(".avatar", el).addEventListener("click", () => toast("פרופילים יתווספו בהמשך"));
+  $(".avatar", el).addEventListener("click", () => {
+    const c = clips[card.clip] || {};
+    if (c.uid) openProfile(c.uid, c.name, c.photo);
+    else toast("לסרטון הזה אין בעלים — הוא הועלה ישירות לגיטהאב");
+  });
+  $(".author", el).addEventListener("click", () => $(".avatar", el).click());
 
   /* --- גרירה על פס ההתקדמות --- */
   const bar = $(".bar", el);
@@ -1144,6 +1193,24 @@ function toggleFlag(bucket, key, force) {
   store.set(bucket, m);
   return on;
 }
+/** שם, תמונה וכיתוב של בעל הסרטון — מהענן אם מישהו העלה אותו דרך האתר */
+function paintOwner(card) {
+  const el = card.el, c = clips[card.clip] || {};
+  const name = c.name || card.item.author || C.defaultAuthor;
+  const cap  = c.caption || card.item.title || "";
+
+  $(".author", el).textContent  = name.charAt(0) === "@" ? name : "@" + name;
+  $(".caption", el).textContent = cap;
+
+  const av = $(".avatar", el);
+  if (c.photo) {
+    av.innerHTML = '<img class="me-av" src="' + esc(c.photo) + '" alt="" referrerpolicy="no-referrer">';
+  } else {
+    av.textContent = name.replace(/^@/, "").charAt(0).toUpperCase() || "?";
+  }
+  card.ownerUid = c.uid || null;
+}
+
 /** בודק מול השרת אם המשתמש הנוכחי כבר עשה לייק לכרטיס הזה */
 function refreshLiked(c) {
   if (!c || !CL.on || !CL.user || liked.has(c.key)) return;
@@ -1617,6 +1684,51 @@ function uploadError(e) {
 const GH_SVG = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
 
 /* ============================================================
+   פרופיל
+   ============================================================ */
+function clipsOf(uid) {
+  return cards.filter(c => (clips[c.clip] || {}).uid === uid);
+}
+
+function openProfile(uid, fallbackName, fallbackPhoto) {
+  const me   = CL.user && CL.user.uid === uid;
+  const mine = uid ? clipsOf(uid) : [];
+  const any  = mine.length ? (clips[mine[0].clip] || {}) : {};
+  const name  = any.name  || fallbackName  || (me && CL.user.name)  || "משתמש";
+  const photo = any.photo || fallbackPhoto || (me && CL.user.photo) || "";
+
+  let likes = 0;
+  mine.forEach(c => { likes += Math.max(0, (stats[c.key] || {}).likes || 0); });
+
+  const grid = mine.length
+    ? '<div class="pgrid">' + mine.map(c =>
+        '<button class="pcell" data-go="' + c.i + '">' +
+          '<video src="' + esc(c.srcs[0]) + '" muted playsinline preload="metadata"></video>' +
+          '<span class="plikes">♥ ' + fmt(Math.max(0, (stats[c.key] || {}).likes || 0)) + "</span>" +
+        "</button>").join("") + "</div>"
+    : '<div class="empty-note">' + (me
+        ? "עוד לא העלית סרטונים.<br>לחץ על + כדי להעלות את הראשון."
+        : "אין עדיין סרטונים מהמשתמש הזה.") + "</div>";
+
+  const s = sheet("פרופיל",
+    '<div class="prof">' +
+      '<div class="ppic">' + (photo
+        ? '<img class="me-av" src="' + esc(photo) + '" alt="" referrerpolicy="no-referrer">'
+        : esc(name.charAt(0).toUpperCase())) + "</div>" +
+      '<div class="pname2">@' + esc(name.replace(/^@/, "")) + "</div>" +
+      '<div class="pstats">' +
+        "<div><b>" + mine.length + "</b><span>סרטונים</span></div>" +
+        "<div><b>" + fmt(likes) + "</b><span>לייקים</span></div>" +
+      "</div>" +
+    "</div>" + grid);
+
+  $$("[data-go]", s).forEach(b => b.addEventListener("click", () => {
+    closeSheet();
+    feed.scrollTo({ top: +b.dataset.go * feed.clientHeight, behavior: "smooth" });
+  }));
+}
+
+/* ============================================================
    מסך המנהל — אישור או דחייה של סרטונים שהועלו
    ============================================================ */
 async function openReview() {
@@ -1782,7 +1894,11 @@ async function openUpload() {
       go.disabled = true; go.style.opacity = ".6";
       $("#pick", s).disabled = true;
       try {
-        await ghCommitFile(f, $("#vcap", s).value, m => { st.textContent = m; });
+        const cap  = $("#vcap", s).value;
+        const path = await ghCommitFile(f, cap, m => { st.textContent = m; });
+        // רושמים מי העלה — כך לסרטון יש בעלים, תמונה וכיתוב בפיד
+        try { await CL.setClip(clipKey(path), { caption: cap }); }
+        catch (err) { console.warn("[cloud] clip meta:", err && err.code); }
         st.textContent = "נשלח ✓ ממתין לאישור המנהל";
         toast("הסרטון נשלח לאישור");
         $("#pick", s).disabled = false;
@@ -1858,9 +1974,13 @@ $("#btnMe").addEventListener("click", () => {
     head +
     "<p>" + status + "</p>" +
     "<p><b>" + mine + "</b> לייקים · <b>" + favs + "</b> שמורים · <b>" + items.length + "</b> סרטונים בענן</p>" +
+    (signedIn() ? '<button class="btn ghost" id="myprof">הפרופיל שלי</button>' : "") +
     (isAdmin() ? '<button class="btn" id="review">ממתינים לאישור<span id="pcount"></span></button>' : "") +
     (signedIn() ? '<button class="btn ghost" id="gso">להתנתק</button>' : "") +
     '<a class="btn ghost" href="' + repoUrl + '" target="_blank" rel="noopener">לנהל את הסרטונים בגיטהאב</a>');
+
+  const mp = $("#myprof", s);
+  if (mp) mp.addEventListener("click", () => openProfile(CL.user.uid));
 
   const rev = $("#review", s);
   if (rev) {
@@ -1962,6 +2082,7 @@ async function start() {
       return;
     }
     CL.watchStats(m => { Object.assign(stats, m); cards.forEach(paintCounts); });
+    CL.watchClips(m => { Object.assign(clips, m); cards.forEach(paintOwner); });
     // התחברות או התנתקות — הלייקים האישיים שייכים למשתמש, אז מאפסים ובודקים מחדש
     CL.onUser(() => {
       liked.clear();
