@@ -638,6 +638,11 @@ window.cloudReady = new Promise(r => { window.__cloudDone = r; });
   }
   .tag.wait{background:rgba(255,193,7,.2);color:#ffd54f}
   .btn.follow{margin-top:16px;max-width:220px;margin-inline:auto}
+  .btn.blk{margin-top:9px;max-width:220px;margin-inline:auto;color:#ff8585}
+  .blocked-note{
+    margin-top:10px;font-size:12.5px;font-weight:700;color:#ff8585;
+    background:rgba(255,80,80,.12);border-radius:999px;padding:5px 12px;display:inline-block;
+  }
   .btn.follow.on{background:rgba(255,255,255,.12)}
   .upcap{
     width:100%;background:rgba(255,255,255,.1);border:0;border-radius:10px;
@@ -914,6 +919,25 @@ const done = window.__cloudDone;
       });
     };
 
+    /* ---- חסימת משתמשים (רק המנהל) ---- */
+    api.watchBlocks = cb => fs.onSnapshot(
+      fs.collection(db, "blocks"),
+      snap => { const m = {}; snap.forEach(d => (m[d.id] = d.data() || {})); cb(m); },
+      err => console.warn("[cloud] blocks:", err.message)
+    );
+
+    api.setBlock = (uid, on, name) => on
+      ? fs.setDoc(fs.doc(db, "blocks", uid), {
+          uid, name: name || "", by: api.uid, at: fs.serverTimestamp()
+        })
+      : fs.deleteDoc(fs.doc(db, "blocks", uid));
+
+    /** בדיקה ישירה מול השרת, לפני העלאה */
+    api.isBlocked = async uid => {
+      try { return (await fs.getDoc(fs.doc(db, "blocks", uid))).exists(); }
+      catch { return false; }
+    };
+
     /** אישור של המנהל — הופך סרטון ממתין לגלוי בפיד */
     api.approveClip = key => fs.updateDoc(fs.doc(db, "clips", key), { approved: true });
     api.deleteClip  = key => fs.deleteDoc(fs.doc(db, "clips", key));
@@ -1043,6 +1067,7 @@ const stats = {};              // { vidKey: {likes, comments} } — מתעדכן
 const liked = new Map();       // { vidKey: true/false } — הלייקים שלי
 const clips = {};              // { clipKey: {uid, name, photo, caption} } — מי העלה מה
 let   iFollow   = new Set();   // ה-uid-ים שאני עוקב אחריהם
+let   blocked   = {};          // { uid: {name, at} } — משתמשים חסומים להעלאה
 let   followers = {};          // { uid: כמה עוקבים יש לו }
 let   tab = "foryou";          // "foryou" או "following"
 let   appliedTab = "foryou";   // הלשונית שכבר הוחלה, כדי לדעת מתי היא באמת התחלפה
@@ -1711,28 +1736,32 @@ function paintOwner(card) {
   }
   card.ownerUid = c.uid || null;
 
-  // כפתור מחיקה: רק ליוצר של הסרטון, או למנהל. מחיקה אפשרית רק לסרטון שהועלה מהאתר
+  // כפתור מחיקה: היוצר מוחק את הסרטונים שהעלה מהאתר, המנהל מוחק כל סרטון
   const delBtn = $(".del", el);
   if (delBtn) {
     const me = CL.user && CL.user.uid;
-    const canDelete = CL.on && !!card.item.clipId && !!me && (c.uid === me || isAdmin());
-    delBtn.hidden = !canDelete;
+    const owner = CL.on && !!card.item.clipId && !!me && c.uid === me;
+    delBtn.hidden = !(owner || isAdmin());
   }
 }
 
-/** מוחק סרטון שהועלה מהאתר. היוצר מוחק את שלו, המנהל מוחק הכל. */
+/** מוחק סרטון מהפיד. היוצר מוחק את שלו, המנהל מוחק כל סרטון — כולל קובץ שיושב ברפו. */
 async function deleteOwnClip(card) {
   const c = clips[card.clip] || {};
   const me = CL.user && CL.user.uid;
-  if (!CL.on || !card.item.clipId || !me || !(c.uid === me || isAdmin())) return;
+  const fromSite = !!card.item.clipId;                  // סרטון שהועלה מהאתר
+  const owner = CL.on && fromSite && !!me && c.uid === me;
+  if (!owner && !isAdmin()) return;
 
   const title = c.caption || card.item.title || "הסרטון";
-  if (!confirm("למחוק את \"" + title + "\"?\nהוא ייעלם מהפיד לכולם.")) return;
+  const repoFile = !fromSite;
+  if (!confirm("למחוק את \"" + title + "\"?\nהוא ייעלם מהפיד לכולם." +
+               (repoFile ? "\n\nזהו קובץ ברפו, והמחיקה תיעשה כקומיט בגיטהאב." : ""))) return;
 
   const btn = $(".del", card.el);
   btn.disabled = true;
-  try {
-    await CL.deleteClip(card.clip);
+
+  const drop = () => {
     delete clips[card.clip];
     card.el.remove();                                   // מוציאים אותו מהפיד מיד
     const k = cards.indexOf(card);
@@ -1742,9 +1771,24 @@ async function deleteOwnClip(card) {
     if (!cards.length) { location.reload(); return; }   // הפיד התרוקן
     active = -1;
     setActive(Math.min(k, cards.length - 1));
+  };
+
+  try {
+    if (repoFile) {
+      if (!CL.ghToken) { toast("מתחבר ל-GitHub…"); await CL.ghSignIn(); }
+      await manageOps.deleteRepoFiles([card.item.path], "מחיקת סרטון: " + card.item.path.split("/").pop());
+      store.set("cache", []);                           // הרשימה השמורה כבר לא נכונה
+      try { await manageOps.deleteClipDoc(card.clip); } catch {}
+    } else {
+      await manageOps.deleteClipDoc(card.clip);
+    }
+    drop();
   } catch (e) {
     btn.disabled = false;
-    toast("לא נמחק — " + cloudErr(e));
+    const code = (e && e.code) || "";
+    if (/popup-closed-by-user|cancelled-popup-request/.test(code)) return;
+    if (/popup-blocked/.test(code)) { toast("הדפדפן חסם את חלון ההתחברות — אשר חלונות קופצים"); return; }
+    toast("לא נמחק — " + (e && e.status ? uploadError(e) : cloudErr(e)));
   }
 }
 
@@ -2369,7 +2413,29 @@ function openProfile(uid, fallbackName, fallbackPhoto) {
         ? '<button class="btn follow' + (following ? " on" : "") + '" id="fbtn">' +
           (following ? "עוקב ✓" : "עקוב") + "</button>"
         : "") +
+      (isAdmin() && !me && uid
+        ? '<button class="btn ghost blk" id="bbtn">' +
+          (blocked[uid] ? "בטל חסימת העלאות" : "חסום העלאות") + "</button>"
+        : "") +
+      (blocked[uid] ? '<div class="blocked-note">חסום להעלאת סרטונים</div>' : "") +
     "</div>" + grid);
+
+  const bb = $("#bbtn", s);
+  if (bb) bb.addEventListener("click", async () => {
+    const on = !blocked[uid];
+    if (on && !confirm("לחסום את \"" + name + "\" מהעלאת סרטונים?\nהוא ימשיך לצפות, ללייק ולהגיב.")) return;
+    bb.disabled = true;
+    try {
+      await CL.setBlock(uid, on, name);
+      if (on) blocked[uid] = { name }; else delete blocked[uid];
+      toast(on ? "נחסם להעלאות" : "החסימה בוטלה");
+      closeSheet();
+      openProfile(uid, fallbackName, fallbackPhoto);
+    } catch (e) {
+      bb.disabled = false;
+      toast("לא נשמר — " + cloudErr(e));
+    }
+  });
 
   const fb = $("#fbtn", s);
   if (fb) fb.addEventListener("click", async () => {
@@ -2441,8 +2507,45 @@ const ADM_ICON = {
   inbox:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l2.5-7h11L20 13v6H4v-6z"/><path d="M4 13h4.5l1 2.5h5l1-2.5H20"/></svg>',
   trash:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg>',
   plus:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
-  user:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20c.9-3.6 3.8-5.4 7.2-5.4s6.3 1.8 7.2 5.4"/></svg>'
+  user:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20c.9-3.6 3.8-5.4 7.2-5.4s6.3 1.8 7.2 5.4"/></svg>',
+  block:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/></svg>'
 };
+
+/** רשימת המשתמשים החסומים, עם ביטול חסימה */
+function openBlocks() {
+  if (!isAdmin()) return;
+  const s = sheet("חסומים", "", "", openAdmin);
+
+  const draw = () => {
+    const ids = Object.keys(blocked);
+    if (!ids.length) {
+      $(".body", s).innerHTML =
+        '<div class="empty-note">אין משתמשים חסומים.<br>' +
+        "כדי לחסום: פתח פרופיל של משתמש ולחץ ״חסום העלאות״.</div>";
+      return;
+    }
+    $(".body", s).innerHTML =
+      '<p class="mrow-note">משתמש חסום לא יכול להעלות סרטונים. הוא כן יכול לצפות, לעשות לייק ולהגיב.</p>' +
+      ids.map(uid => {
+        const b = blocked[uid] || {};
+        const nm = b.name || (Object.values(clips).find(c => c.uid === uid) || {}).name || uid.slice(0, 10);
+        return '<div class="nrow" style="cursor:default">' +
+          '<div class="av">' + esc(nm.charAt(0).toUpperCase()) + "</div>" +
+          '<div class="txt"><div class="bd">' + esc(nm) + "</div>" +
+          '<div class="nm">נחסם ' + timeAgo(b.at && b.at.toMillis ? b.at.toMillis() : 0) + "</div></div>" +
+          '<button class="no" data-unblock="' + esc(uid) + '" style="flex:0 0 auto;padding:7px 12px;border-radius:8px;background:rgba(255,255,255,.12);font-weight:700;font-size:13px">בטל</button>' +
+          "</div>";
+      }).join("");
+
+    $$("[data-unblock]", s).forEach(b => b.addEventListener("click", async () => {
+      const uid = b.dataset.unblock;
+      b.disabled = true;
+      try { await CL.setBlock(uid, false); delete blocked[uid]; toast("החסימה בוטלה"); draw(); }
+      catch (e) { b.disabled = false; toast("לא בוטל — " + cloudErr(e)); }
+    }));
+  };
+  draw();
+}
 
 function openAdmin() {
   if (!isAdmin()) return;
@@ -2470,6 +2573,7 @@ function openAdmin() {
       tile("t-manage", "danger", ADM_ICON.trash, "ניהול סרטונים",  "מחיקה, כולל ״מחק הכול״") +
       tile("t-upload", "",       ADM_ICON.plus,  "העלאת סרטון",    "עובר אישור כמו כולם") +
       tile("t-prof",   "",       ADM_ICON.user,  "הפרופיל שלי",    "הסרטונים והמספרים שלי") +
+      tile("t-block",  "warn",   ADM_ICON.block, "חסומים",         "מי לא יכול להעלות") +
     "</div>" +
 
     '<div class="adm-sec">כלים חיצוניים</div>' +
@@ -2483,6 +2587,9 @@ function openAdmin() {
   $("#t-manage", s).addEventListener("click", openManage);
   $("#t-upload", s).addEventListener("click", () => { closeSheet(); openUpload(); });
   $("#t-prof",   s).addEventListener("click", () => { closeSheet(); openProfile(u.uid); });
+  $("#t-block",  s).addEventListener("click", openBlocks);
+  const bbadge = $("#t-block .badge", s);
+  if (bbadge) { const n = Object.keys(blocked).length; bbadge.textContent = n; bbadge.hidden = !n; }
 
   const paintPending = n => {
     const badge = $("#t-review .badge", s), st = $("#stP", s);
@@ -2749,6 +2856,16 @@ async function openUpload() {
     if (!openSheet) return;        // המשתמש סגר בינתיים
   }
 
+  // העלאה דורשת התחברות. מבקשים אותה כאן, לפני שבוחרים קובץ
+  if (CL.on && !signedIn()) { needLogin("להעלות סרטון"); return; }
+
+  if (CL.on && blocked[CL.user.uid]) {
+    sheet("ההעלאה חסומה",
+      "<p>חשבון זה חסום להעלאת סרטונים.</p>" +
+      "<p>אפשר להמשיך לצפות, לעשות לייק ולהגיב.</p>");
+    return;
+  }
+
   if (!CL.on) {
     sheet("להוסיף סרטון",
       "<p>העלאה מהאתר דורשת חיבור ל-Firebase (הוא מטפל בהתחברות ל-GitHub). כרגע האפליקציה במצב מקומי.</p>" +
@@ -2816,6 +2933,15 @@ async function openUpload() {
 
       if (!nameOk()) { toast("תן שם לסרטון (לפחות 2 תווים)"); nameBox.focus(); return; }
       if (CL.on && !signedIn()) { needLogin("להעלות סרטון"); return; }   // לפני ההעלאה, לא אחריה
+
+      // משתמש חסום: נבדק מול השרת ברגע ההעלאה, לא רק לפי מה שנטען לדפדפן
+      if (CL.on && CL.isBlocked && await CL.isBlocked(CL.user.uid)) {
+        st.textContent = "";
+        sheet("ההעלאה נחסמה",
+          "<p>חשבון זה חסום להעלאת סרטונים.</p>" +
+          "<p>אפשר להמשיך לצפות, לעשות לייק ולהגיב. אם לדעתך זו טעות, פנה למנהל.</p>");
+        return;
+      }
 
       const bad = await rejectReason(f);      // בדיקה שנייה, ממש לפני הכתיבה לרפו
       if (bad) { toast("נחסם — " + bad); fileInput.value = ""; info.textContent = ""; fileOk = false; refreshGo(); return; }
@@ -3244,6 +3370,7 @@ async function start() {
     }
     CL.watchStats(m => { Object.assign(stats, m); cards.forEach(paintCounts); });
     CL.watchClips(m => { Object.assign(clips, m); cards.forEach(paintOwner); applyTab(); rerankUpcoming(); });
+    CL.watchBlocks(m => { blocked = m; });
     CL.watchFollows(list => {
       const before = followers[(CL.user || {}).uid] || 0;
       followers = {};
